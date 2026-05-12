@@ -471,6 +471,12 @@ app.get('/api/superadmin/stats', superAdmin, async (req, res) => {
 });
 
 
+// ── Rena URL:er ──
+app.get('/login',      (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
+app.get('/superadmin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'superadmin.html')));
+app.get('/app',        (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/kiosk',      (req, res) => res.sendFile(path.join(__dirname, 'public', 'kiosk.html')));
+
 // ── Start ──
 app.listen(PORT, () => console.log(`
 ✅  Scanny körs på http://localhost:${PORT}

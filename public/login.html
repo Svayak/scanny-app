@@ -127,7 +127,7 @@ async function handleLogin(e) {
     if (!res.ok) throw new Error(data.error || 'Inloggning misslyckades');
     localStorage.setItem('scanny_token', data.token);
     localStorage.setItem('scanny_user', JSON.stringify(data.user));
-    window.location.href = '/';
+    window.location.href = '/app';
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.style.display = 'block';
