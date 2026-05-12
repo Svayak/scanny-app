@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Scanny Kiosk</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0c0f0a;--surface:#141810;--surface2:#1c2118;
+  --border:#2a3025;--border2:#3a4535;
+  --text:#f0ede8;--text2:#9fa899;--text3:#6b7265;
+  --accent:#4ade80;--accent-light:rgba(74,222,128,.12);--accent-dark:#16a34a;
+  --warn:#fbbf24;--warn-light:rgba(251,191,36,.12);
+  --danger:#f87171;--danger-light:rgba(248,113,113,.12);
+  --radius:16px;--radius-lg:24px;
+}
+html,body{height:100%;overflow:hidden;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:var(--text);user-select:none;-webkit-tap-highlight-color:transparent}
+
+body::before{content:'';position:fixed;inset:0;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");pointer-events:none;z-index:0;opacity:.35}
+
+/* ── Skärmar ── */
+.screen{display:none;height:100vh;flex-direction:column}
+.screen.active{display:flex}
+
+/* ── Header ── */
+.k-header{padding:20px 24px 0;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.k-brand{display:flex;align-items:center;gap:10px;font-size:26px;font-weight:800;color:var(--accent)}
+.k-brand svg{width:28px;height:28px}
+.k-status{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text3)}
+.status-dot{width:9px;height:9px;border-radius:50%;background:#22c55e}
+.status-dot.error{background:var(--danger)}
+
+/* ════════════════════
+   VÄLJ ANVÄNDARE
+   ════════════════════ */
+#screen-users{background:var(--bg)}
+.users-title{text-align:center;font-size:20px;font-weight:600;color:var(--text2);padding:20px 24px 8px}
+.users-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(200px,1fr));
+  gap:14px;
+  padding:16px 24px 24px;
+  overflow-y:auto;
+  flex:1;
+  align-content:start;
+}
+.user-card{
+  background:var(--surface);border:2px solid var(--border);border-radius:var(--radius-lg);
+  padding:20px 16px;display:flex;flex-direction:row;align-items:center;gap:16px;
+  cursor:pointer;transition:all .15s;
+  min-height:80px;
+}
+.user-card:hover{border-color:var(--accent);box-shadow:0 4px 20px rgba(74,222,128,.08);transform:translateY(-2px)}
+.user-card:active{transform:scale(.97)}
+.user-avatar{
+  width:52px;height:52px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:18px;font-weight:700;color:#fff;flex-shrink:0;
+}
+.user-name{font-size:15px;font-weight:600;text-align:left;line-height:1.3}
+.no-users{text-align:center;color:var(--text3);padding:3rem;font-size:15px;grid-column:1/-1}
+
+/* ════════════════════
+   SKANNA (huvud-skärm)
+   ════════════════════ */
+#screen-scan{background:var(--bg)}
+.scan-layout{
+  display:grid;
+  grid-template-rows:auto 1fr auto;
+  height:100vh;
+  padding:20px 24px 24px;
+  gap:16px;
+}
+
+/* Användarrad */
+.user-bar{
+  display:flex;align-items:center;justify-content:space-between;
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:10px 16px;
+}
+.user-bar-left{display:flex;align-items:center;gap:10px}
+.user-bar-avatar{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;flex-shrink:0}
+.user-bar-name{font-size:14px;font-weight:600}
+.user-bar-role{font-size:12px;color:var(--text3);margin-top:1px}
+.logout-btn{padding:6px 14px;font-size:13px;font-weight:600;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface2);color:var(--text2);cursor:pointer;transition:all .12s}
+.logout-btn:hover{border-color:rgba(248,113,113,.4);color:var(--danger)}
+
+/* Feedback-kort */
+.feedback-card{
+  background:var(--surface);border:3px solid var(--border);border-radius:var(--radius-lg);
+  padding:28px 32px;text-align:center;transition:border-color .2s,background .2s;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+}
+.feedback-card.ok{background:rgba(74,222,128,.08);border-color:rgba(74,222,128,.4)}
+.feedback-card.warn{background:rgba(251,191,36,.08);border-color:rgba(251,191,36,.4)}
+.feedback-card.err{background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.4)}
+.feedback-icon{font-size:52px;line-height:1}
+.feedback-name{font-size:28px;font-weight:700}
+.feedback-qty{font-size:60px;font-weight:800;line-height:1}
+.feedback-qty.ok{color:var(--accent)}.feedback-qty.warn{color:var(--warn)}.feedback-qty.danger{color:var(--danger)}
+.feedback-qty-label{font-size:16px;color:var(--text2)}
+.feedback-msg{font-size:16px;color:var(--text2);margin-top:2px}
+.idle-icon-wrap{width:72px;height:72px;border-radius:50%;background:#f0ede8;display:flex;align-items:center;justify-content:center;margin:0 auto 12px}
+.idle-text{font-size:20px;font-weight:600;color:var(--text3)}
+.idle-hint{font-size:14px;color:var(--text3);margin-top:4px}
+
+/* Inv-panel */
+.inv-panel{background:var(--surface);border:2px solid rgba(167,139,250,.4);border-radius:var(--radius-lg);padding:20px 24px;max-height:40vh;overflow-y:auto}
+.inv-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.inv-title{font-size:16px;font-weight:700;color:#a78bfa}
+.inv-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)}
+.inv-row:last-child{border-bottom:none}
+.inv-name{font-size:13px;font-weight:500}
+.inv-diff{font-size:12px;margin-top:2px}
+.inv-diff.pos{color:var(--accent)}.inv-diff.neg{color:var(--danger)}.inv-diff.zero{color:var(--text3)}
+.inv-count{font-size:26px;font-weight:700}
+.inv-actions{display:flex;gap:10px;margin-top:14px}
+
+/* Lägesväljare */
+.mode-section{}
+.mode-bar{display:flex;gap:12px}
+.mode-btn{
+  flex:1;padding:16px 12px;font-size:17px;font-weight:700;border-radius:var(--radius);
+  border:3px solid var(--border);background:var(--surface);color:var(--text2);
+  cursor:pointer;transition:all .15s;display:flex;flex-direction:column;align-items:center;gap:6px;
+}
+.mode-btn .mode-icon{font-size:28px}
+.mode-btn:active{transform:scale(.97)}
+.mode-btn.mode-out.active{background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.5);color:#f87171}
+.mode-btn.mode-add.active{background:rgba(74,222,128,.12);border-color:rgba(74,222,128,.5);color:var(--accent)}
+.mode-btn.mode-inv.active{background:rgba(167,139,250,.12);border-color:rgba(167,139,250,.5);color:#a78bfa}
+.mode-btn.disabled{opacity:.35;cursor:not-allowed;pointer-events:none}
+.mode-indicator{height:5px;border-radius:3px;margin-top:10px;transition:background .2s}
+.mode-indicator.out{background:#f87171}
+.mode-indicator.add{background:var(--accent)}
+.mode-indicator.inv{background:#a78bfa}
+
+/* Timer */
+.timer-bar-wrap{display:none;margin-top:8px;background:var(--border);border-radius:3px;height:5px;overflow:hidden}
+.timer-bar-wrap.visible{display:block}
+.timer-bar{height:100%;border-radius:3px;background:#22C55E;transition:width 1s linear,background .5s;width:100%}
+.timer-label{display:none;text-align:center;font-size:12px;font-weight:600;color:var(--text3);margin-top:5px}
+.timer-label.visible{display:block}
+.timer-label.urgent{color:var(--danger)}
+
+/* ── Knappar ── */
+.btn{padding:10px 20px;font-size:14px;font-weight:600;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;transition:all .12s}
+.btn:active{transform:scale(.97)}
+.btn-primary{background:var(--accent);color:#0c0f0a;border-color:var(--accent);font-weight:700}
+.btn-primary:hover{background:#22c55e}
+.btn-danger{border-color:rgba(248,113,113,.4);color:var(--danger);background:rgba(248,113,113,.08)}
+
+/* ── Gömt input ── */
+.barcode-input{position:fixed;left:-9999px;opacity:0;width:1px;height:1px}
+
+/* ════════════════════
+   MODAL (reg-nr + okänd)
+   ════════════════════ */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;display:none;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(6px)}
+.modal-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:32px;width:100%;max-width:520px;box-shadow:0 24px 80px rgba(0,0,0,.6);animation:modal-in .18s ease}
+@keyframes modal-in{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.modal-title{font-size:22px;font-weight:700;margin-bottom:6px}
+.modal-subtitle{font-size:14px;color:var(--text2);margin-bottom:20px}
+.form-group{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
+.form-group label{font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.04em}
+.form-group input{padding:10px 12px;font-size:16px;border:1.5px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);outline:none;transition:border-color .15s}
+.form-group input:focus{border-color:var(--accent)}
+.form-group input::placeholder{color:var(--text3)}
+.modal-actions{display:flex;gap:10px;margin-top:20px}
+
+/* Fordonslista */
+.vehicle-list{display:flex;flex-direction:column;gap:8px;margin-bottom:16px;max-height:260px;overflow-y:auto}
+.vehicle-item{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 14px;border:1.5px solid var(--border);border-radius:var(--radius);
+  cursor:pointer;transition:all .12s;background:var(--surface2);
+}
+.vehicle-item:hover{border-color:var(--accent);background:rgba(74,222,128,.06)}
+.vehicle-item.last-used{border-color:var(--accent);background:rgba(74,222,128,.08)}
+.vehicle-reg{font-size:18px;font-weight:700;letter-spacing:1px;color:var(--text)}
+.vehicle-info{font-size:12px;color:var(--text2);margin-top:2px}
+.vehicle-customer{font-size:12px;color:var(--text3)}
+.no-vehicle-btn{width:100%;padding:12px;border:1.5px dashed var(--border);border-radius:var(--radius);background:none;font-size:14px;color:var(--text3);cursor:pointer;transition:all .12s;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+.no-vehicle-btn:hover{border-color:var(--text3);color:var(--text2)}
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════
+     SKÄRM 1: Välj användare
+     ════════════════════════════════ -->
+<div class="screen active" id="screen-users">
+  <div class="k-header">
+    <div class="k-brand">
+      <svg viewBox="0 0 24 24" fill="none">
+        <rect x="3" y="3" width="3" height="12" rx="0.5" fill="currentColor" opacity=".9"/>
+        <rect x="7.5" y="3" width="1.5" height="12" rx="0.5" fill="currentColor" opacity=".6"/>
+        <rect x="10.5" y="3" width="2" height="12" rx="0.5" fill="currentColor" opacity=".8"/>
+        <rect x="14" y="3" width="1" height="12" rx="0.5" fill="currentColor" opacity=".5"/>
+        <rect x="16.5" y="3" width="2.5" height="12" rx="0.5" fill="currentColor" opacity=".7"/>
+      </svg>
+      Scanny
+    </div>
+    <div class="k-status">
+      <div class="status-dot" id="k-status-dot"></div>
+      <span id="k-status-text">Ansluter...</span>
+    </div>
+  </div>
+  <div class="users-title">Välj användare</div>
+  <div class="users-grid" id="users-grid"></div>
+</div>
+
+<!-- ════════════════════════════════
+     SKÄRM 2: Skanna
+     ════════════════════════════════ -->
+<div class="screen" id="screen-scan">
+  <div class="scan-layout">
+
+    <!-- Användarrad -->
+    <div class="user-bar">
+      <div class="user-bar-left">
+        <div class="user-bar-avatar" id="bar-avatar"></div>
+        <div>
+          <div class="user-bar-name" id="bar-name"></div>
+          <div class="user-bar-role" id="bar-vehicle">Inget fordon valt</div>
+        </div>
+      </div>
+      <button class="logout-btn" onclick="logout()">↩ Logga ut</button>
+    </div>
+
+    <!-- Feedback + inv-panel -->
+    <div style="display:flex;flex-direction:column;gap:12px;flex:1;overflow:hidden">
+      <div class="feedback-card" id="feedback-card">
+        <div class="idle-icon-wrap">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="3" width="3" height="12" rx="0.5" fill="#9e9b96" opacity=".9"/>
+            <rect x="7.5" y="3" width="1.5" height="12" rx="0.5" fill="#9e9b96" opacity=".6"/>
+            <rect x="10.5" y="3" width="2" height="12" rx="0.5" fill="#9e9b96" opacity=".8"/>
+            <rect x="14" y="3" width="1" height="12" rx="0.5" fill="#9e9b96" opacity=".5"/>
+            <rect x="16.5" y="3" width="2.5" height="12" rx="0.5" fill="#9e9b96" opacity=".7"/>
+          </svg>
+        </div>
+        <div class="idle-text">Redo att skanna</div>
+        <div class="idle-hint" id="mode-hint">Uttag — skanna en artikel</div>
+      </div>
+      <div class="inv-panel" id="inv-panel" style="display:none">
+        <div class="inv-header">
+          <div class="inv-title">📋 Inventering pågår</div>
+          <div style="font-size:13px;color:var(--text2)" id="k-inv-summary"></div>
+        </div>
+        <div id="k-inv-list"></div>
+        <div class="inv-actions">
+          <button class="btn btn-danger" onclick="resetInventory()">Rensa</button>
+          <button class="btn btn-primary" onclick="finishInventory()">✓ Avsluta</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Lägesväljare + timer -->
+    <div class="mode-section">
+      <div class="mode-bar">
+        <button class="mode-btn mode-out active" id="btn-out" onclick="setMode('out')">
+          <span class="mode-icon">📤</span>Uttag
+        </button>
+        <button class="mode-btn mode-add" id="btn-add" onclick="setMode('add')">
+          <span class="mode-icon">📥</span>Addera
+        </button>
+        <button class="mode-btn mode-inv" id="btn-inv" onclick="setMode('inv')">
+          <span class="mode-icon">📋</span>Inventering
+        </button>
+      </div>
+      <div class="mode-indicator out" id="k-mode-indicator"></div>
+      <div class="timer-bar-wrap" id="timer-bar-wrap"><div class="timer-bar" id="timer-bar"></div></div>
+      <div class="timer-label" id="timer-label">Återgår till Uttag om <span id="timer-countdown"></span></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Gömt input -->
+<input type="text" id="barcode-input" class="barcode-input" autocomplete="off">
+
+<!-- ── MODAL: Välj fordon ── -->
+<div class="modal-overlay" id="vehicle-modal">
+  <div class="modal-box">
+    <div class="modal-title">🚗 Koppla till fordon</div>
+    <div class="modal-subtitle">Välj fordon för detta uttag, eller fortsätt utan fordon</div>
+    <div class="vehicle-list" id="vehicle-list"></div>
+    <div class="form-group">
+      <label>Sök reg-nr</label>
+      <input id="vehicle-search" placeholder="ABC123" oninput="filterVehicles()" autocomplete="off" style="font-size:20px;letter-spacing:2px;text-transform:uppercase">
+    </div>
+    <button class="no-vehicle-btn" onclick="selectVehicle(null)">Fortsätt utan fordon</button>
+  </div>
+</div>
+
+<!-- ── MODAL: Okänd streckkod ── -->
+<div class="modal-overlay" id="unknown-modal">
+  <div class="modal-box">
+    <div class="modal-title">Okänd streckkod</div>
+    <div class="modal-subtitle">Kod: <span id="unknown-code-display" style="font-family:monospace;font-weight:700"></span></div>
+    <input type="hidden" id="unknown-code-value">
+    <div class="form-group"><label>Produktnamn *</label><input id="unknown-name" placeholder="T.ex. Borrbit 6mm" style="font-size:18px"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>Antal</label><input id="unknown-qty" type="number" value="1" min="0"></div>
+      <div class="form-group"><label>Beställ antal</label><input id="unknown-order-qty" type="number" value="10" min="1"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>Beställningsnivå</label><input id="unknown-min" type="number" value="5" min="1"></div>
+      <div class="form-group"><label>Kritisk nivå</label><input id="unknown-critical" type="number" value="2" min="0"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group"><label>Artikelnummer</label><input id="unknown-article" placeholder="12345"></div>
+      <div class="form-group"><label>Leverantör</label><input id="unknown-supplier" placeholder="Würth"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" style="flex:1" onclick="closeUnknownModal()">Avbryt</button>
+      <button class="btn btn-primary" style="flex:2" onclick="saveUnknownProduct()">Lägg till</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════
+//  Scanny Kiosk — med användare & fordon
+// ═══════════════════════════════════════════
+
+let db = { products: [], users: [], vehicles: [], settings: {} };
+let currentUser    = null;
+let currentVehicle = null;  // { id, regNr, ... } eller null
+let currentMode    = 'out';
+let inventory      = {};
+let scanCooldown   = false;
+
+const AUTO_RESET_MS   = 10 * 60 * 1000;
+const LOGOUT_IDLE_MS  = 10 * 60 * 1000;
+
+let autoResetTimer  = null;
+let logoutTimer     = null;
+let timerInterval   = null;
+let timerSecondsLeft = 0;
+
+// ── Ljud ──
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx = null;
+function getAudioCtx() { if (!audioCtx) audioCtx = new AudioCtx(); return audioCtx; }
+function playTone(freq, dur, type='sine', vol=0.25) {
+  try {
+    const ctx = getAudioCtx(), osc = ctx.createOscillator(), gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.type = type; osc.frequency.value = freq;
+    gain.gain.setValueAtTime(vol, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + dur);
+  } catch(e) {}
+}
+function soundSuccess()  { playTone(880,.12,'sine',.22); setTimeout(()=>playTone(1100,.18,'sine',.18),100); }
+function soundWarning()  { playTone(440,.25,'triangle',.28); }
+function soundError()    { playTone(200,.18,'sawtooth',.28); setTimeout(()=>playTone(160,.28,'sawtooth',.28),160); }
+function soundCritical() { playTone(300,.15,'square',.32); setTimeout(()=>playTone(250,.15,'square',.32),180); setTimeout(()=>playTone(200,.25,'square',.32),360); }
+
+// ── API ──
+async function api(method, path, body) {
+  const res = await fetch(path, { method, headers: body?{'Content-Type':'application/json'}:{}, body: body?JSON.stringify(body):undefined });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Serverfel');
+  return data;
+}
+async function loadDb() {
+  try { db = await api('GET','/api/db'); setStatus(true); renderUserGrid(); }
+  catch(_) { setStatus(false); }
+}
+function setStatus(ok) {
+  const dot = document.getElementById('k-status-dot'), txt = document.getElementById('k-status-text');
+  if (dot) dot.className = 'status-dot'+(ok?'':' error');
+  if (txt) txt.textContent = ok?'Ansluten':'Offline';
+}
+
+// ── Skärmbyte ──
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+// ════════════════════════════════
+//  ANVÄNDARGRID
+// ════════════════════════════════
+function renderUserGrid() {
+  const grid = document.getElementById('users-grid');
+  const users = db.users || [];
+  if (users.length === 0) {
+    grid.innerHTML = '<div class="no-users">Inga användare tillagda ännu.<br>Lägg till användare i Admin-panelen.</div>';
+    return;
+  }
+  grid.innerHTML = users.map(u => `
+    <div class="user-card" onclick="selectUser(${u.id})">
+      <div class="user-avatar" style="background:${u.color || '#0f6e56'}">${u.initials || '?'}</div>
+      <div class="user-name">${esc(u.name)}</div>
+    </div>`).join('');
+}
+
+function selectUser(userId) {
+  const u = db.users.find(x => x.id === userId);
+  if (!u) return;
+  currentUser    = u;
+  currentVehicle = null;
+
+  // Uppdatera användarrad
+  const av = document.getElementById('bar-avatar');
+  av.style.background = u.color || '#0f6e56';
+  av.textContent = u.initials || '?';
+  document.getElementById('bar-name').textContent = u.name;
+  updateVehicleBar();
+
+  // Sätt behörigheter på knappar
+  applyPermissions(u);
+
+  // Gå till scan-skärmen
+  showScreen('screen-scan');
+  setMode('out');
+  startLogoutTimer();
+  focusInput();
+
+  // Om användaren har Uttag — visa fordonspicker direkt
+  if (u.permissions?.scan !== false) {
+    showVehicleModal();
+  }
+}
+
+function applyPermissions(u) {
+  const p = u.permissions || {};
+  const btnOut = document.getElementById('btn-out');
+  const btnAdd = document.getElementById('btn-add');
+  const btnInv = document.getElementById('btn-inv');
+  if (btnOut) btnOut.classList.toggle('disabled', p.scan === false);
+  if (btnAdd) btnAdd.classList.toggle('disabled', p.add === false);
+  if (btnInv) btnInv.classList.toggle('disabled', p.inventory === false);
+}
+
+function updateVehicleBar() {
+  const el = document.getElementById('bar-vehicle');
+  if (!el) return;
+  el.textContent = currentVehicle ? '🚗 ' + currentVehicle.regNr + (currentVehicle.make ? ' — ' + currentVehicle.make + ' ' + currentVehicle.model : '') : 'Inget fordon valt';
+}
+
+// ════════════════════════════════
+//  FORDONSPICKER
+// ════════════════════════════════
+function showVehicleModal() {
+  filterVehicles();
+  document.getElementById('vehicle-search').value = '';
+  document.getElementById('vehicle-modal').style.display = 'flex';
+  setTimeout(() => document.getElementById('vehicle-search').focus(), 100);
+}
+
+function filterVehicles() {
+  const q = (document.getElementById('vehicle-search')?.value || '').toUpperCase().trim();
+  const vehicles = (db.vehicles || []).filter(v => !v.archived);
+  const filtered = q ? vehicles.filter(v => v.regNr.includes(q) || (v.customerName||'').toUpperCase().includes(q)) : vehicles;
+  const lastUsedId = currentUser?.lastVehicleId;
+  const list = document.getElementById('vehicle-list');
+  if (!list) return;
+  if (filtered.length === 0) {
+    list.innerHTML = '<div style="text-align:center;color:var(--text3);padding:1rem;font-size:14px">Inga fordon hittades</div>';
+    return;
+  }
+  list.innerHTML = filtered.map(v => `
+    <div class="vehicle-item ${v.id === lastUsedId ? 'last-used' : ''}" onclick="selectVehicle(${v.id})">
+      <div>
+        <div class="vehicle-reg">${esc(v.regNr)}</div>
+        <div class="vehicle-info">${esc([v.make, v.model, v.color].filter(Boolean).join(' '))}</div>
+        <div class="vehicle-customer">${esc(v.customerName || '')}</div>
+      </div>
+      ${v.id === lastUsedId ? '<span style="font-size:12px;color:var(--accent);font-weight:600">Senast använd</span>' : ''}
+    </div>`).join('');
+}
+
+async function selectVehicle(vehicleId) {
+  document.getElementById('vehicle-modal').style.display = 'none';
+  if (vehicleId) {
+    currentVehicle = db.vehicles.find(v => v.id === vehicleId) || null;
+    // Spara senast använda fordon på användaren
+    if (currentUser) {
+      currentUser.lastVehicleId = vehicleId;
+      try { await api('PATCH', '/api/users/' + currentUser.id, { lastVehicleId: vehicleId }); } catch(_) {}
+    }
+  } else {
+    currentVehicle = null;
+  }
+  updateVehicleBar();
+  focusInput();
+}
+
+// ════════════════════════════════
+//  LOGOUT & TIMERS
+// ════════════════════════════════
+function logout() {
+  currentUser    = null;
+  currentVehicle = null;
+  inventory      = {};
+  clearTimeout(autoResetTimer);
+  clearTimeout(logoutTimer);
+  clearInterval(timerInterval);
+  hideTimer();
+  showScreen('screen-users');
+  setMode('out');
+}
+
+function startLogoutTimer() {
+  clearTimeout(logoutTimer);
+  logoutTimer = setTimeout(() => { logout(); }, LOGOUT_IDLE_MS);
+}
+
+function resetLogoutTimer() {
+  startLogoutTimer();
+}
+
+function startAutoReset() {
+  clearTimeout(autoResetTimer);
+  clearInterval(timerInterval);
+  timerSecondsLeft = AUTO_RESET_MS / 1000;
+  showTimer();
+  timerInterval = setInterval(() => {
+    timerSecondsLeft--;
+    updateTimerDisplay();
+    if (timerSecondsLeft <= 0) {
+      clearInterval(timerInterval);
+      if (currentMode === 'add') {
+        setMode('out');
+        showFeedback('warn','⏱','Läget återställt','Tillbaka till Uttag',null);
+      }
+    }
+  }, 1000);
+}
+
+function showTimer() {
+  document.getElementById('timer-bar-wrap')?.classList.add('visible');
+  document.getElementById('timer-label')?.classList.add('visible');
+  updateTimerDisplay();
+}
+function hideTimer() {
+  clearInterval(timerInterval);
+  document.getElementById('timer-bar-wrap')?.classList.remove('visible');
+  const lbl = document.getElementById('timer-label');
+  if (lbl) { lbl.classList.remove('visible','urgent'); }
+}
+function updateTimerDisplay() {
+  const bar = document.getElementById('timer-bar');
+  const cd  = document.getElementById('timer-countdown');
+  const lbl = document.getElementById('timer-label');
+  const total = AUTO_RESET_MS / 1000;
+  const pct   = (timerSecondsLeft / total) * 100;
+  if (bar) { bar.style.width = pct+'%'; bar.style.background = timerSecondsLeft <= 60 ? 'var(--danger)' : '#22C55E'; }
+  if (cd) { const m=Math.floor(timerSecondsLeft/60),s=timerSecondsLeft%60; cd.textContent = m>0?m+' min '+s+' sek':s+' sek'; }
+  if (lbl) lbl.classList.toggle('urgent', timerSecondsLeft <= 60);
+}
+
+// ════════════════════════════════
+//  LÄGESHANTERING
+// ════════════════════════════════
+function setMode(mode) {
+  if (currentMode === 'inv' && mode !== 'inv' && Object.keys(inventory).length > 0) {
+    if (!confirm('Avbryta pågående inventering?')) return;
+    inventory = {};
+  }
+  currentMode = mode;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.querySelector('.mode-btn.mode-' + mode);
+  if (btn) btn.classList.add('active');
+  const ind = document.getElementById('k-mode-indicator');
+  if (ind) ind.className = 'mode-indicator ' + mode;
+  const hints = { out:'Uttag — skanna en artikel', add:'Addera — skanna för att fylla på', inv:'Inventering — skanna varje artikel du räknar' };
+  const hint = document.getElementById('mode-hint');
+  if (hint) hint.textContent = hints[mode];
+  const invPanel = document.getElementById('inv-panel');
+  if (invPanel) invPanel.style.display = mode === 'inv' ? 'block' : 'none';
+  showIdle();
+  if (mode === 'add') startAutoReset();
+  else { clearTimeout(autoResetTimer); hideTimer(); }
+  focusInput();
+}
+
+// ════════════════════════════════
+//  FEEDBACK
+// ════════════════════════════════
+let feedbackTimer = null;
+function showIdle() {
+  clearTimeout(feedbackTimer);
+  const card = document.getElementById('feedback-card');
+  const hints = { out:'Uttag — skanna en artikel', add:'Addera — skanna för att fylla på', inv:'Inventering — skanna varje artikel du räknar' };
+  card.className = 'feedback-card';
+  card.innerHTML = `
+    <div class="idle-icon-wrap">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+        <rect x="3" y="3" width="3" height="12" rx="0.5" fill="#9e9b96" opacity=".9"/>
+        <rect x="7.5" y="3" width="1.5" height="12" rx="0.5" fill="#9e9b96" opacity=".6"/>
+        <rect x="10.5" y="3" width="2" height="12" rx="0.5" fill="#9e9b96" opacity=".8"/>
+        <rect x="14" y="3" width="1" height="12" rx="0.5" fill="#9e9b96" opacity=".5"/>
+        <rect x="16.5" y="3" width="2.5" height="12" rx="0.5" fill="#9e9b96" opacity=".7"/>
+      </svg>
+    </div>
+    <div class="idle-text">Redo att skanna</div>
+    <div class="idle-hint">${hints[currentMode]}</div>`;
+}
+function showFeedback(type, icon, name, msg, qty) {
+  clearTimeout(feedbackTimer);
+  const card = document.getElementById('feedback-card');
+  card.className = 'feedback-card ' + type;
+  let qtyHtml = '';
+  if (qty !== null && qty !== undefined) {
+    const cls = qty === 0 ? 'danger' : qty <= 3 ? 'warn' : 'ok';
+    qtyHtml = `<div class="feedback-qty ${cls}">${qty}</div><div class="feedback-qty-label">st kvar i lager</div>`;
+  }
+  card.innerHTML = `<div class="feedback-icon">${icon}</div><div class="feedback-name">${esc(name)}</div>${qtyHtml}<div class="feedback-msg">${esc(msg)}</div>`;
+  feedbackTimer = setTimeout(showIdle, 4000);
+}
+
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ════════════════════════════════
+//  GLOBAL TANGENTBORDSFÅNGST
+// ════════════════════════════════
+document.addEventListener('keydown', e => {
+  if (e.key === 'Tab' || e.key === 'Escape' || e.metaKey || e.ctrlKey) return;
+  const isModal = document.getElementById('vehicle-modal').style.display !== 'none' ||
+                  document.getElementById('unknown-modal').style.display !== 'none';
+  if (isModal) return;
+  const active = document.activeElement;
+  const isOther = (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && active.id !== 'barcode-input';
+  if (isOther) return;
+  if (document.getElementById('screen-scan').classList.contains('active')) focusInput();
+});
+function focusInput() { document.getElementById('barcode-input')?.focus(); }
+
+document.getElementById('barcode-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { const v = e.target.value.trim(); if (v) { scanProduct(v); e.target.value = ''; } }
+});
+
+// ════════════════════════════════
+//  SKANNING
+// ════════════════════════════════
+async function scanProduct(code) {
+  if (scanCooldown) return;
+  scanCooldown = true;
+  setTimeout(() => { scanCooldown = false; }, 1200);
+  resetLogoutTimer();
+  if (currentMode === 'add') startAutoReset();
+
+  // Inventeringsläge
+  if (currentMode === 'inv') {
+    const p = db.products.find(x => x.code === code.trim());
+    if (!p) { soundError(); showFeedback('err','✗','Okänd streckkod', code, null); return; }
+    if (!inventory[p.id]) inventory[p.id] = { id:p.id, name:p.name, code:p.code, previous:p.qty, scanned:0 };
+    inventory[p.id].scanned++;
+    soundSuccess();
+    showFeedback('ok','📋', p.name, 'Inventering', inventory[p.id].scanned);
+    renderInvList();
+    return;
+  }
+
+  const endpoint = currentMode === 'add' ? '/api/add' : '/api/scan';
+  try {
+    const res = await api('POST', endpoint, { code });
+    const p   = res.product;
+
+    // Logga uttag på fordon
+    if (currentMode === 'out' && currentVehicle) {
+      const prod = db.products.find(x => x.name === p.name);
+      try {
+        await api('POST', '/api/vehicles/' + currentVehicle.id + '/log', {
+          productName: p.name,
+          qty: 1,
+          userName: currentUser?.name || '—',
+          articleNo: prod?.articleNo || '—',
+          supplier:  prod?.supplier  || '—'
+        });
+      } catch(_) {}
+    }
+
+    if (currentMode === 'add') {
+      soundSuccess(); showFeedback('ok','📥', p.name, 'Påfyllning registrerad', p.qty);
+    } else if (res.criticalAlert) {
+      soundCritical(); showFeedback('err','🚨', p.name, 'KRITISKT LAGER — varning skickad!', p.qty);
+    } else if (res.orderCreated) {
+      soundWarning(); showFeedback('warn','⚠', p.name, 'Lagd i beställningskö', p.qty);
+    } else {
+      soundSuccess(); showFeedback('ok','✓', p.name, 'Uttag registrerat', p.qty);
+    }
+    await loadDb();
+  } catch (err) {
+    if (err.message?.startsWith('Okänd streckkod')) { soundError(); showAddUnknown(code); }
+    else { soundError(); showFeedback('err','✗','Fel', err.message, null); }
+  }
+}
+
+// ════════════════════════════════
+//  OKÄND STRECKKOD
+// ════════════════════════════════
+function showAddUnknown(code) {
+  document.getElementById('unknown-code-display').textContent = code;
+  document.getElementById('unknown-code-value').value = code;
+  ['unknown-name','unknown-article','unknown-supplier'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('unknown-qty').value = '1';
+  document.getElementById('unknown-min').value = '5';
+  document.getElementById('unknown-critical').value = '2';
+  document.getElementById('unknown-order-qty').value = '10';
+  document.getElementById('unknown-modal').style.display = 'flex';
+  setTimeout(() => document.getElementById('unknown-name').focus(), 100);
+}
+function closeUnknownModal() { document.getElementById('unknown-modal').style.display = 'none'; focusInput(); }
+async function saveUnknownProduct() {
+  const body = {
+    name:     document.getElementById('unknown-name').value.trim(),
+    code:     document.getElementById('unknown-code-value').value.trim(),
+    qty:      parseInt(document.getElementById('unknown-qty').value)||0,
+    min:      parseInt(document.getElementById('unknown-min').value)||5,
+    critical: parseInt(document.getElementById('unknown-critical').value)||2,
+    orderQty: parseInt(document.getElementById('unknown-order-qty').value)||10,
+    articleNo: document.getElementById('unknown-article').value.trim(),
+    supplier:  document.getElementById('unknown-supplier').value.trim()
+  };
+  if (!body.name) { document.getElementById('unknown-name').focus(); return; }
+  try { await api('POST','/api/products',body); closeUnknownModal(); soundSuccess(); showFeedback('ok','✓',body.name,'Produkt tillagd!',body.qty); await loadDb(); }
+  catch(err) { soundError(); alert('Fel: '+err.message); }
+}
+document.getElementById('unknown-modal').addEventListener('keydown', e => { if(e.key==='Enter'&&e.target.tagName==='INPUT') saveUnknownProduct(); if(e.key==='Escape') closeUnknownModal(); });
+
+// ════════════════════════════════
+//  INVENTERING
+// ════════════════════════════════
+function renderInvList() {
+  const list = document.getElementById('k-inv-list'), sum = document.getElementById('k-inv-summary');
+  const entries = Object.values(inventory);
+  if (!list) return;
+  if (entries.length === 0) { list.innerHTML=''; if(sum) sum.textContent='Skanna artiklar...'; return; }
+  const diffs = entries.map(e=>e.scanned-e.previous);
+  if (sum) sum.textContent = entries.length+' artiklar · '+diffs.filter(d=>d!==0).length+' differenser';
+  list.innerHTML = entries.sort((a,b)=>a.name.localeCompare(b.name,'sv')).map(e=>{
+    const d=e.scanned-e.previous, ds=d>0?'+'+d:''+d, dc=d>0?'pos':d<0?'neg':'zero';
+    return `<div class="inv-row"><div><div class="inv-name">${esc(e.name)}</div><div class="inv-diff ${dc}">System:${e.previous} → Räknat:${e.scanned} (${ds})</div></div><div class="inv-count">${e.scanned}</div></div>`;
+  }).join('');
+}
+function resetInventory() { if(!confirm('Rensa inventeringen?')) return; inventory={}; renderInvList(); showIdle(); }
+async function finishInventory() {
+  const entries = Object.values(inventory);
+  if (entries.length===0) { alert('Inga artiklar skannade.'); return; }
+  const diffs = entries.filter(e=>e.scanned!==e.previous);
+  if (diffs.length===0) { soundSuccess(); showFeedback('ok','✓','Inventering klar!','Ingen differens',null); inventory={}; renderInvList(); setMode('out'); return; }
+  if (!confirm('Avsluta inventering? ('+diffs.length+' differenser)')) return;
+  for (const e of entries) { try { await api('PATCH','/api/products/'+e.id,{qty:e.scanned}); } catch(_){} }
+  try { await api('POST','/api/inventory-report',{entries}); } catch(_){}
+  await loadDb(); soundSuccess(); showFeedback('ok','✓','Inventering klar!',diffs.length+' differenser uppdaterade',null);
+  inventory={}; renderInvList(); setMode('out');
+}
+
+// ── Start ──
+loadDb();
+setInterval(loadDb, 15000);
+</script>
+</body>
+</html>
