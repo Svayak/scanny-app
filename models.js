@@ -4,6 +4,8 @@ const mongoose = require('mongoose');
 const tenantSchema = new mongoose.Schema({
   name:      { type: String, required: true },
   slug:      { type: String, required: true, unique: true },
+  status:    { type: String, enum: ['active', 'paused', 'cancelled'], default: 'active' },
+  plan:      { type: String, enum: ['bas', 'standard', 'pro'], default: 'bas' },
   createdAt: { type: Date, default: Date.now },
   settings: {
     email:    { type: String, default: '' },

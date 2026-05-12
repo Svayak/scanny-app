@@ -378,5 +378,100 @@ app.get('/api/db', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Superadmin middleware ──
+function superAdmin(req, res, next) {
+  const secret = req.headers['x-admin-secret'];
+  if (secret !== process.env.ADMIN_SECRET) return res.status(403).json({ error: 'Obehörig' });
+  next();
+}
+
+// ══════════════════════════════════════════
+//  SUPERADMIN ROUTES
+// ══════════════════════════════════════════
+
+// Hämta alla tenants
+app.get('/api/superadmin/tenants', superAdmin, async (req, res) => {
+  try {
+    const tenants = await Tenant.find().sort({ createdAt: -1 });
+    const result = await Promise.all(tenants.map(async t => {
+      const userCount    = await User.countDocuments({ tenantId: t._id });
+      const productCount = await Product.countDocuments({ tenantId: t._id });
+      const adminUser    = await User.findOne({ tenantId: t._id, role: 'admin' }).select('email name');
+      return { ...t.toObject(), userCount, productCount, adminEmail: adminUser?.email, adminName: adminUser?.name };
+    }));
+    res.json(result);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Skapa ny tenant
+app.post('/api/superadmin/tenants', superAdmin, async (req, res) => {
+  try {
+    const { tenantName, adminEmail, adminPassword, adminName, plan } = req.body;
+    if (!tenantName || !adminEmail || !adminPassword) return res.status(400).json({ error: 'Namn, e-post och lösenord krävs' });
+    const slug = tenantName.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now().toString(36);
+    const tenant = await Tenant.create({ name: tenantName, slug, plan: plan || 'bas', settings: { workshop: tenantName } });
+    const hashed = await bcrypt.hash(adminPassword, 10);
+    const user = await User.create({ tenantId: tenant._id, name: adminName || tenantName, email: adminEmail.toLowerCase(), password: hashed, role: 'admin' });
+    res.json({ ok: true, tenantId: tenant._id, userId: user._id, slug });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Uppdatera tenant (pausa, byt plan, byt e-post)
+app.patch('/api/superadmin/tenants/:id', superAdmin, async (req, res) => {
+  try {
+    const { status, plan, adminEmail, adminPassword, name } = req.body;
+    const tenant = await Tenant.findById(req.params.id);
+    if (!tenant) return res.status(404).json({ error: 'Kund hittades inte' });
+    if (status) tenant.status = status;
+    if (plan)   tenant.plan   = plan;
+    if (name)   tenant.name   = name;
+    await tenant.save();
+    if (adminEmail || adminPassword) {
+      const admin = await User.findOne({ tenantId: tenant._id, role: 'admin' });
+      if (admin) {
+        if (adminEmail)   admin.email    = adminEmail.toLowerCase();
+        if (adminPassword) admin.password = await bcrypt.hash(adminPassword, 10);
+        await admin.save();
+      }
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Ta bort tenant
+app.delete('/api/superadmin/tenants/:id', superAdmin, async (req, res) => {
+  try {
+    const tenant = await Tenant.findById(req.params.id);
+    if (!tenant) return res.status(404).json({ error: 'Kund hittades inte' });
+    await Promise.all([
+      User.deleteMany({ tenantId: tenant._id }),
+      Product.deleteMany({ tenantId: tenant._id }),
+      Order.deleteMany({ tenantId: tenant._id }),
+      Vehicle.deleteMany({ tenantId: tenant._id }),
+      Log.deleteMany({ tenantId: tenant._id }),
+      Tenant.findByIdAndDelete(tenant._id)
+    ]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Statistik
+app.get('/api/superadmin/stats', superAdmin, async (req, res) => {
+  try {
+    const [total, active, paused, bas, standard, pro] = await Promise.all([
+      Tenant.countDocuments(),
+      Tenant.countDocuments({ status: 'active' }),
+      Tenant.countDocuments({ status: 'paused' }),
+      Tenant.countDocuments({ plan: 'bas' }),
+      Tenant.countDocuments({ plan: 'standard' }),
+      Tenant.countDocuments({ plan: 'pro' })
+    ]);
+    res.json({ total, active, paused, cancelled: total - active - paused, plans: { bas, standard, pro } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
 // ── Start ──
-app.listen(PORT, () => console.log(`\n✅  Scanny körs på http://localhost:${PORT}\n`));
+app.listen(PORT, () => console.log(`
+✅  Scanny körs på http://localhost:${PORT}
+`));

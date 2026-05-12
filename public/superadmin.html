@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Scanny Admin</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0c0f0a;--surface:#141810;--surface2:#1c2118;
+  --border:#2a3025;--border2:#3a4535;
+  --text:#f0ede8;--text2:#9fa899;--text3:#6b7265;
+  --accent:#4ade80;--accent2:#22c55e;
+  --warn:#fbbf24;--danger:#f87171;
+  --radius:8px;--radius-lg:14px;
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;min-height:100vh}
+body::before{content:'';position:fixed;inset:0;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");pointer-events:none;z-index:0;opacity:.35}
+
+/* AUTH */
+#auth-screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:100;background:var(--bg)}
+.auth-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:40px;width:100%;max-width:380px;position:relative;z-index:1}
+.auth-brand{display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:28px}
+.auth-brand-icon{width:32px;height:32px;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center}
+.auth-brand-name{font-size:18px;font-weight:800;color:var(--text)}
+.auth-subtitle{font-size:13px;color:var(--text3);text-align:center;margin-bottom:24px}
+.form-group{display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
+.form-group label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text3)}
+.form-group input{padding:10px 12px;background:var(--surface2);border:1px solid var(--border2);border-radius:var(--radius);color:var(--text);font-size:14px;outline:none;transition:border-color .2s;font-family:inherit}
+.form-group input:focus{border-color:var(--accent)}
+.form-group input::placeholder{color:var(--text3)}
+
+/* LAYOUT */
+#app{display:none;min-height:100vh;position:relative;z-index:1}
+header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 32px;display:flex;align-items:center;justify-content:space-between}
+.header-brand{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:800;color:var(--accent)}
+.header-brand-icon{width:28px;height:28px;background:var(--accent);border-radius:6px;display:flex;align-items:center;justify-content:center}
+.header-right{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--text2)}
+main{max-width:1100px;margin:0 auto;padding:32px 24px}
+
+/* STATS */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:32px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px 20px}
+.stat-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);margin-bottom:6px}
+.stat-value{font-size:32px;font-weight:700;letter-spacing:-.5px}
+.stat-value.green{color:var(--accent)}
+.stat-value.yellow{color:var(--warn)}
+.stat-value.red{color:var(--danger)}
+
+/* TOOLBAR */
+.toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;flex-wrap:wrap}
+.toolbar h2{font-size:18px;font-weight:700}
+.search-input{padding:8px 12px;background:var(--surface2);border:1px solid var(--border2);border-radius:var(--radius);color:var(--text);font-size:13px;outline:none;width:220px;transition:border-color .2s;font-family:inherit}
+.search-input:focus{border-color:var(--accent)}
+.search-input::placeholder{color:var(--text3)}
+
+/* BUTTONS */
+.btn{padding:8px 16px;font-size:13px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;font-weight:500;transition:all .12s;font-family:inherit;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:var(--border)}
+.btn-primary{background:var(--accent);color:#0c0f0a;border-color:var(--accent);font-weight:700}
+.btn-primary:hover{background:var(--accent2)}
+.btn-sm{padding:4px 10px;font-size:12px}
+.btn-warn{border-color:rgba(251,191,36,.4);color:var(--warn);background:rgba(251,191,36,.08)}
+.btn-warn:hover{background:rgba(251,191,36,.15)}
+.btn-danger{border-color:rgba(248,113,113,.4);color:var(--danger);background:rgba(248,113,113,.08)}
+.btn-danger:hover{background:rgba(248,113,113,.15)}
+.btn-success{border-color:rgba(74,222,128,.4);color:var(--accent);background:rgba(74,222,128,.08)}
+.btn-success:hover{background:rgba(74,222,128,.15)}
+
+/* TABLE */
+.table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:11px;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface2)}
+td{padding:12px 16px;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text)}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--surface2)}
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:3px 10px;border-radius:999px}
+.badge-active{background:rgba(74,222,128,.15);color:var(--accent)}
+.badge-paused{background:rgba(251,191,36,.15);color:var(--warn)}
+.badge-cancelled{background:rgba(248,113,113,.15);color:var(--danger)}
+.badge-bas{background:rgba(96,165,250,.15);color:#60a5fa}
+.badge-standard{background:rgba(167,139,250,.15);color:#a78bfa}
+.badge-pro{background:rgba(74,222,128,.15);color:var(--accent)}
+
+/* MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:200;display:none;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)}
+.modal-overlay.open{display:flex}
+.modal-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px;width:100%;max-width:480px;box-shadow:0 24px 80px rgba(0,0,0,.5);animation:modal-in .18s ease}
+@keyframes modal-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+.modal-title{font-size:17px;font-weight:700;margin-bottom:20px}
+.modal-actions{display:flex;gap:8px;margin-top:20px;justify-content:flex-end}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+/* TOAST */
+.toast{position:fixed;bottom:24px;right:24px;padding:12px 18px;border-radius:var(--radius);font-size:13px;font-weight:500;z-index:9999;opacity:0;transform:translateY(8px);transition:opacity .2s,transform .2s;pointer-events:none;border:1px solid var(--border)}
+.toast.show{opacity:1;transform:none}
+.toast.success{background:rgba(74,222,128,.15);color:var(--accent);border-color:rgba(74,222,128,.3)}
+.toast.error{background:rgba(248,113,113,.15);color:var(--danger);border-color:rgba(248,113,113,.3)}
+</style>
+</head>
+<body>
+
+<!-- AUTH -->
+<div id="auth-screen">
+  <div class="auth-box">
+    <div class="auth-brand">
+      <div class="auth-brand-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+          <rect x="3" y="3" width="3" height="12" rx="0.5" fill="#0c0f0a"/>
+          <rect x="7.5" y="3" width="1.5" height="12" rx="0.5" fill="#0c0f0a" opacity=".6"/>
+          <rect x="10.5" y="3" width="2" height="12" rx="0.5" fill="#0c0f0a" opacity=".8"/>
+          <rect x="14" y="3" width="1" height="12" rx="0.5" fill="#0c0f0a" opacity=".5"/>
+          <rect x="16.5" y="3" width="2.5" height="12" rx="0.5" fill="#0c0f0a" opacity=".7"/>
+        </svg>
+      </div>
+      <div class="auth-brand-name">Scanny Admin</div>
+    </div>
+    <p class="auth-subtitle">Superadmin — endast för Scanny-teamet</p>
+    <div class="form-group">
+      <label>Admin-nyckel</label>
+      <input type="password" id="auth-key" placeholder="••••••••••••" autofocus>
+    </div>
+    <div id="auth-error" style="font-size:13px;color:var(--danger);margin-bottom:12px;display:none">Fel nyckel</div>
+    <button class="btn btn-primary" style="width:100%" onclick="authenticate()">Logga in</button>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <header>
+    <div class="header-brand">
+      <div class="header-brand-icon">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+          <rect x="3" y="3" width="3" height="12" rx="0.5" fill="#0c0f0a"/>
+          <rect x="7.5" y="3" width="1.5" height="12" rx="0.5" fill="#0c0f0a" opacity=".6"/>
+          <rect x="10.5" y="3" width="2" height="12" rx="0.5" fill="#0c0f0a" opacity=".8"/>
+        </svg>
+      </div>
+      Scanny Admin
+    </div>
+    <div class="header-right">
+      <span style="color:var(--accent)">● Live</span>
+      <button class="btn btn-sm" onclick="logout()">Logga ut</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Stats -->
+    <div class="stats-grid" id="stats-grid">
+      <div class="stat-card"><div class="stat-label">Totalt kunder</div><div class="stat-value" id="s-total">—</div></div>
+      <div class="stat-card"><div class="stat-label">Aktiva</div><div class="stat-value green" id="s-active">—</div></div>
+      <div class="stat-card"><div class="stat-label">Pausade</div><div class="stat-value yellow" id="s-paused">—</div></div>
+      <div class="stat-card"><div class="stat-label">Bas-paket</div><div class="stat-value" id="s-bas">—</div></div>
+      <div class="stat-card"><div class="stat-label">Standard</div><div class="stat-value" id="s-standard">—</div></div>
+      <div class="stat-card"><div class="stat-label">Pro</div><div class="stat-value green" id="s-pro">—</div></div>
+    </div>
+
+    <!-- Kundlista -->
+    <div class="toolbar">
+      <h2>Kundkonton</h2>
+      <div style="display:flex;gap:8px">
+        <input type="text" class="search-input" placeholder="Sök kund..." oninput="filterTenants(this.value)">
+        <button class="btn btn-primary" onclick="openAddModal()">+ Lägg till kund</button>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Verkstad</th>
+            <th>Admin-e-post</th>
+            <th>Paket</th>
+            <th>Status</th>
+            <th>Skapad</th>
+            <th>Användare</th>
+            <th>Produkter</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="tenants-body"></tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+<!-- MODAL: Lägg till kund -->
+<div class="modal-overlay" id="add-modal">
+  <div class="modal-box">
+    <div class="modal-title">Lägg till ny kund</div>
+    <div class="form-group"><label>Verkstadens namn *</label><input id="m-name" placeholder="Svenssons Verkstad AB"></div>
+    <div class="form-row">
+      <div class="form-group"><label>Admin-e-post *</label><input id="m-email" type="email" placeholder="admin@verkstad.se"></div>
+      <div class="form-group"><label>Admin-namn</label><input id="m-admin-name" placeholder="Kalle Svensson"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Lösenord *</label><input id="m-password" type="password" placeholder="Minst 6 tecken"></div>
+      <div class="form-group"><label>Paket</label>
+        <select id="m-plan" style="padding:10px 12px;background:var(--surface2);border:1px solid var(--border2);border-radius:var(--radius);color:var(--text);font-size:14px;outline:none;font-family:inherit">
+          <option value="bas">Bas — 499 kr/mån</option>
+          <option value="standard">Standard — 799 kr/mån</option>
+          <option value="pro">Pro — 1 299 kr/mån</option>
+        </select>
+      </div>
+    </div>
+    <div id="add-error" style="font-size:13px;color:var(--danger);margin-top:8px;display:none"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('add-modal')">Avbryt</button>
+      <button class="btn btn-primary" onclick="addTenant()">Skapa konto</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Redigera kund -->
+<div class="modal-overlay" id="edit-modal">
+  <div class="modal-box">
+    <div class="modal-title">Redigera kund</div>
+    <input type="hidden" id="e-id">
+    <div class="form-group"><label>Verkstadens namn</label><input id="e-name" placeholder="Verkstadens namn"></div>
+    <div class="form-row">
+      <div class="form-group"><label>Admin-e-post</label><input id="e-email" type="email" placeholder="admin@verkstad.se"></div>
+      <div class="form-group"><label>Nytt lösenord</label><input id="e-password" type="password" placeholder="Lämna tomt för oförändrat"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Paket</label>
+        <select id="e-plan" style="padding:10px 12px;background:var(--surface2);border:1px solid var(--border2);border-radius:var(--radius);color:var(--text);font-size:14px;outline:none;font-family:inherit">
+          <option value="bas">Bas</option>
+          <option value="standard">Standard</option>
+          <option value="pro">Pro</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Status</label>
+        <select id="e-status" style="padding:10px 12px;background:var(--surface2);border:1px solid var(--border2);border-radius:var(--radius);color:var(--text);font-size:14px;outline:none;font-family:inherit">
+          <option value="active">Aktiv</option>
+          <option value="paused">Pausad</option>
+          <option value="cancelled">Avslutad</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('edit-modal')">Avbryt</button>
+      <button class="btn btn-primary" onclick="saveTenant()">Spara</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let adminSecret = '';
+let allTenants = [];
+
+// ── Auth ──
+document.getElementById('auth-key').addEventListener('keydown', e => { if (e.key === 'Enter') authenticate(); });
+
+async function authenticate() {
+  const key = document.getElementById('auth-key').value.trim();
+  if (!key) return;
+  try {
+    const res = await fetch('/api/superadmin/stats', { headers: { 'x-admin-secret': key } });
+    if (!res.ok) { document.getElementById('auth-error').style.display = 'block'; return; }
+    adminSecret = key;
+    document.getElementById('auth-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    loadAll();
+  } catch(e) { document.getElementById('auth-error').style.display = 'block'; }
+}
+
+function logout() { adminSecret = ''; location.reload(); }
+
+// ── API ──
+async function sa(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: { 'Content-Type': 'application/json', 'x-admin-secret': adminSecret },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Fel');
+  return data;
+}
+
+// ── Load ──
+async function loadAll() {
+  try {
+    const [stats, tenants] = await Promise.all([
+      sa('GET', '/api/superadmin/stats'),
+      sa('GET', '/api/superadmin/tenants')
+    ]);
+    allTenants = tenants;
+    renderStats(stats);
+    renderTenants(tenants);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+function renderStats(s) {
+  document.getElementById('s-total').textContent    = s.total;
+  document.getElementById('s-active').textContent   = s.active;
+  document.getElementById('s-paused').textContent   = s.paused;
+  document.getElementById('s-bas').textContent      = s.plans.bas;
+  document.getElementById('s-standard').textContent = s.plans.standard;
+  document.getElementById('s-pro').textContent      = s.plans.pro;
+}
+
+function renderTenants(tenants) {
+  const tbody = document.getElementById('tenants-body');
+  if (!tenants.length) { tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:2rem">Inga kunder ännu</td></tr>'; return; }
+  tbody.innerHTML = tenants.map(t => `
+    <tr>
+      <td style="font-weight:600">${esc(t.name)}</td>
+      <td style="color:var(--text2);font-size:13px">${esc(t.adminEmail || '—')}</td>
+      <td><span class="badge badge-${t.plan}">${t.plan}</span></td>
+      <td><span class="badge badge-${t.status}">${t.status === 'active' ? 'Aktiv' : t.status === 'paused' ? 'Pausad' : 'Avslutad'}</span></td>
+      <td style="color:var(--text3);font-size:12px">${new Date(t.createdAt).toLocaleDateString('sv-SE')}</td>
+      <td style="text-align:center;color:var(--text2)">${t.userCount}</td>
+      <td style="text-align:center;color:var(--text2)">${t.productCount}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-sm" onclick="openEditModal('${t._id}')">Redigera</button>
+        ${t.status === 'active'
+          ? `<button class="btn btn-sm btn-warn" style="margin-left:4px" onclick="togglePause('${t._id}', 'paused')">Pausa</button>`
+          : `<button class="btn btn-sm btn-success" style="margin-left:4px" onclick="togglePause('${t._id}', 'active')">Aktivera</button>`
+        }
+        <button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteTenant('${t._id}', '${esc(t.name)}')">Ta bort</button>
+      </td>
+    </tr>`).join('');
+}
+
+function filterTenants(q) {
+  const filtered = allTenants.filter(t =>
+    t.name.toLowerCase().includes(q.toLowerCase()) ||
+    (t.adminEmail || '').toLowerCase().includes(q.toLowerCase())
+  );
+  renderTenants(filtered);
+}
+
+// ── Add modal ──
+function openAddModal() {
+  ['m-name','m-email','m-admin-name','m-password'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('m-plan').value = 'bas';
+  document.getElementById('add-error').style.display = 'none';
+  document.getElementById('add-modal').classList.add('open');
+  setTimeout(() => document.getElementById('m-name').focus(), 100);
+}
+
+async function addTenant() {
+  const name = document.getElementById('m-name').value.trim();
+  const email = document.getElementById('m-email').value.trim();
+  const adminName = document.getElementById('m-admin-name').value.trim();
+  const password = document.getElementById('m-password').value;
+  const plan = document.getElementById('m-plan').value;
+  const errEl = document.getElementById('add-error');
+  if (!name || !email || !password) { errEl.textContent = 'Fyll i alla obligatoriska fält'; errEl.style.display = 'block'; return; }
+  try {
+    await sa('POST', '/api/superadmin/tenants', { tenantName: name, adminEmail: email, adminPassword: password, adminName: adminName || name, plan });
+    toast('Kund skapad!');
+    closeModal('add-modal');
+    loadAll();
+  } catch(e) { errEl.textContent = e.message; errEl.style.display = 'block'; }
+}
+
+// ── Edit modal ──
+function openEditModal(id) {
+  const t = allTenants.find(x => x._id === id);
+  if (!t) return;
+  document.getElementById('e-id').value = id;
+  document.getElementById('e-name').value = t.name;
+  document.getElementById('e-email').value = t.adminEmail || '';
+  document.getElementById('e-password').value = '';
+  document.getElementById('e-plan').value = t.plan;
+  document.getElementById('e-status').value = t.status;
+  document.getElementById('edit-modal').classList.add('open');
+}
+
+async function saveTenant() {
+  const id = document.getElementById('e-id').value;
+  const body = {
+    name: document.getElementById('e-name').value.trim(),
+    adminEmail: document.getElementById('e-email').value.trim(),
+    plan: document.getElementById('e-plan').value,
+    status: document.getElementById('e-status').value,
+  };
+  const pw = document.getElementById('e-password').value;
+  if (pw) body.adminPassword = pw;
+  try {
+    await sa('PATCH', '/api/superadmin/tenants/' + id, body);
+    toast('Kund uppdaterad!');
+    closeModal('edit-modal');
+    loadAll();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Quick pause/activate ──
+async function togglePause(id, status) {
+  try {
+    await sa('PATCH', '/api/superadmin/tenants/' + id, { status });
+    toast(status === 'paused' ? 'Konto pausat' : 'Konto aktiverat');
+    loadAll();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Delete ──
+async function deleteTenant(id, name) {
+  if (!confirm('Ta bort "' + name + '"?\n\nALL data raderas permanent — produkter, ordrar, fordon, användare.')) return;
+  try {
+    await sa('DELETE', '/api/superadmin/tenants/' + id);
+    toast('Kund borttagen');
+    loadAll();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Utils ──
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.querySelectorAll('.modal-overlay').forEach(el => el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); }));
+document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(el => el.classList.remove('open')); });
+
+function esc(str) { return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+let toastTimer;
+function toast(msg, type = 'success') {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.className = 'toast ' + type + ' show';
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+}
+</script>
+</body>
+</html>
