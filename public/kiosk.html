@@ -360,6 +360,13 @@ function soundWarning()  { playTone(440,.25,'triangle',.28); }
 function soundError()    { playTone(200,.18,'sawtooth',.28); setTimeout(()=>playTone(160,.28,'sawtooth',.28),160); }
 function soundCritical() { playTone(300,.15,'square',.32); setTimeout(()=>playTone(250,.15,'square',.32),180); setTimeout(()=>playTone(200,.25,'square',.32),360); }
 
+function getInitials(name) {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length-1][0]).toUpperCase();
+  return parts[0].substring(0, 2).toUpperCase();
+}
+
 // ── Kiosk slug & token ──
 const kioskSlug = window.location.pathname.split('/kiosk/')[1] || '';
 let kioskToken  = localStorage.getItem('kiosk_token_' + kioskSlug) || '';
@@ -432,7 +439,7 @@ function renderUserGrid() {
   }
   grid.innerHTML = users.map(u => `
     <div class="user-card" onclick="selectUser(${u.id})">
-      <div class="user-avatar" style="background:${u.color || '#0f6e56'}">${u.initials || '?'}</div>
+      <div class="user-avatar" style="background:${u.color || '#0f6e56'}">${getInitials(u.name)}</div>
       <div class="user-name">${esc(u.name)}</div>
     </div>`).join('');
 }
@@ -446,7 +453,7 @@ function selectUser(userId) {
   // Uppdatera användarrad
   const av = document.getElementById('bar-avatar');
   av.style.background = u.color || '#0f6e56';
-  av.textContent = u.initials || '?';
+  av.textContent = getInitials(u.name);
   document.getElementById('bar-name').textContent = u.name;
   updateVehicleBar();
 
