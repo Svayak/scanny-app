@@ -360,9 +360,46 @@ function soundWarning()  { playTone(440,.25,'triangle',.28); }
 function soundError()    { playTone(200,.18,'sawtooth',.28); setTimeout(()=>playTone(160,.28,'sawtooth',.28),160); }
 function soundCritical() { playTone(300,.15,'square',.32); setTimeout(()=>playTone(250,.15,'square',.32),180); setTimeout(()=>playTone(200,.25,'square',.32),360); }
 
+// ── Kiosk slug & token ──
+const kioskSlug = window.location.pathname.split('/kiosk/')[1] || '';
+let kioskToken  = localStorage.getItem('kiosk_token_' + kioskSlug) || '';
+
+async function initKiosk() {
+  if (!kioskSlug) {
+    document.body.innerHTML = '<div style="display:flex;height:100vh;align-items:center;justify-content:center;font-size:18px;color:#f87171;font-family:sans-serif">Ingen verkstad angiven.<br>Använd URL: /kiosk/verkstadens-namn</div>';
+    return;
+  }
+  // Hämta token om vi inte har en
+  if (!kioskToken) {
+    try {
+      const res = await fetch('/api/kiosk/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug: kioskSlug })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      kioskToken = data.token;
+      localStorage.setItem('kiosk_token_' + kioskSlug, kioskToken);
+    } catch(err) {
+      document.body.innerHTML = '<div style="display:flex;height:100vh;align-items:center;justify-content:center;font-size:18px;color:#f87171;font-family:sans-serif">' + err.message + '</div>';
+      return;
+    }
+  }
+  await loadDb();
+}
+
 // ── API ──
 async function api(method, path, body) {
-  const res = await fetch(path, { method, headers: body?{'Content-Type':'application/json'}:{}, body: body?JSON.stringify(body):undefined });
+  const headers = {};
+  if (body) headers['Content-Type'] = 'application/json';
+  if (kioskToken) headers['Authorization'] = 'Bearer ' + kioskToken;
+  const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  if (res.status === 401) {
+    localStorage.removeItem('kiosk_token_' + kioskSlug);
+    location.reload();
+    return;
+  }
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Serverfel');
   return data;
@@ -755,7 +792,7 @@ async function finishInventory() {
 }
 
 // ── Start ──
-loadDb();
+initKiosk();
 setInterval(loadDb, 15000);
 </script>
 </body>

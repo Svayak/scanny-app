@@ -475,7 +475,25 @@ app.get('/api/superadmin/stats', superAdmin, async (req, res) => {
 app.get('/login',      (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/superadmin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'superadmin.html')));
 app.get('/app',        (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/kiosk/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'kiosk.html')));
 app.get('/kiosk',      (req, res) => res.sendFile(path.join(__dirname, 'public', 'kiosk.html')));
+
+// ── Kiosk token — hämta JWT via slug (ingen inloggning krävs) ──
+app.post('/api/kiosk/token', async (req, res) => {
+  try {
+    const slug = req.body.slug || req.query.slug;
+    if (!slug) return res.status(400).json({ error: 'Slug krävs' });
+    const tenant = await Tenant.findOne({ slug });
+    if (!tenant) return res.status(404).json({ error: 'Verkstad hittades inte' });
+    if (tenant.status !== 'active') return res.status(403).json({ error: 'Kontot är pausat' });
+    const token = jwt.sign(
+      { tenantId: tenant._id, role: 'kiosk', name: 'Kiosk' },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+    res.json({ token, tenantName: tenant.name });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 // ── Start ──
 app.listen(PORT, () => console.log(`
