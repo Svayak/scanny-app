@@ -232,15 +232,26 @@ app.get('/api/users', authMiddleware, async (req, res) => {
 
 app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
   try {
-    const { name, email, password, role, color, permissions } = req.body;
-    if (!name || !email || !password) return res.status(400).json({ error: 'Namn, e-post och lösenord krävs' });
-    if (await User.findOne({ email: email.toLowerCase() })) return res.status(409).json({ error: 'E-post finns redan' });
-    const hashed = await bcrypt.hash(password, 10);
-    const user = await User.create({ tenantId: req.tenantId, name, email: email.toLowerCase(), password: hashed, role: role||'staff', color: color||'#0f6e56', permissions: permissions||{} });
+    const { name, color, permissions } = req.body;
+    if (!name) return res.status(400).json({ error: 'Namn krävs' });
+    // Kiosk-användare behöver inget e-post eller lösenord
+    const fakeEmail = name.toLowerCase().replace(/[^a-z0-9]/g,'.') + '.' + Date.now() + '@kiosk.scanny.internal';
+    const hashed = await bcrypt.hash(Math.random().toString(36), 10);
+    const user = await User.create({
+      tenantId: req.tenantId, name,
+      email: fakeEmail, password: hashed,
+      role: 'staff', color: color || randomColor(),
+      permissions: permissions || { canScan: true, canAdd: true, canInventory: false }
+    });
     await addLog(req.tenantId, `Ny användare: ${name}`);
-    res.json({ id: user._id, name: user.name, email: user.email, role: user.role, color: user.color });
+    res.json({ id: user._id, name: user.name, color: user.color, permissions: user.permissions });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+function randomColor() {
+  const colors = ['#0f6e56','#7c3aed','#b45309','#1d4ed8','#be185d','#0369a1','#b91c1c','#047857'];
+  return colors[Math.floor(Math.random() * colors.length)];
+}
 
 app.patch('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
   try {
