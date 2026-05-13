@@ -22,7 +22,7 @@ jobs:
           mongodump --uri="${{ secrets.MONGODB_URI }}" --archive=backup-$DATE.gz --gzip
 
       - name: Upload to Azure Blob Storage
-        uses: azure/CLI@v1
+        uses: azure/CLI@v2
         with:
           inlineScript: |
             DATE=$(date +%Y-%m-%d)
