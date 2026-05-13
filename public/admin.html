@@ -48,6 +48,7 @@
     <div class="sidebar-footer">
       <div class="status-dot" id="status-dot"></div>
       <span id="status-text">Ansluter...</span>
+      <button onclick="logout()" style="margin-left:auto;background:none;border:none;cursor:pointer;font-size:12px;color:var(--text3);padding:0" title="Logga ut">↩ Logga ut</button>
     </div>
   </aside>
 
@@ -434,6 +435,11 @@
 </div>
 
 <script>
+function logout() {
+  localStorage.removeItem("scanny_token");
+  localStorage.removeItem("scanny_slug");
+  window.location.href = "/login";
+}
 // Kontrollera inloggning innan sidan laddas
 if (!localStorage.getItem('scanny_token')) {
   window.location.href = '/login';
