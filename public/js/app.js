@@ -172,6 +172,9 @@ async function api(method, path, body) {
 async function loadAll() {
   try {
     db = await api('GET', '/api/db');
+    if (db.products) db.products.forEach(p => { if (!p.id) p.id = p._id; });
+    if (db.users)    db.users.forEach(u    => { if (!u.id) u.id = u._id; });
+    if (db.vehicles) db.vehicles.forEach(v => { if (!v.id) v.id = v._id; });
     setStatus(true);
     renderAll();
   } catch (_) {
