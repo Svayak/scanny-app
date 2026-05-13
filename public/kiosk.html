@@ -504,7 +504,7 @@ function renderUserGrid() {
     return;
   }
   grid.innerHTML = users.map(u => `
-    <div class="user-card" onclick="selectUser(${u.id})">
+    <div class="user-card" onclick="selectUser('${u.id}')">
       <div class="user-avatar" style="background:${u.color || '#0f6e56'}">${getInitials(u.name)}</div>
       <div class="user-name">${esc(u.name)}</div>
     </div>`).join('');
