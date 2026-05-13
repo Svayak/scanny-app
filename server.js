@@ -445,6 +445,34 @@ app.get('/api/logs', authMiddleware, async (req, res) => {
   res.json(await Log.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(100));
 });
 
+app.get('/api/vehicles/:id/export', authMiddleware, async (req, res) => {
+  try {
+    const v = await Vehicle.findOne({ _id: req.params.id, tenantId: req.tenantId });
+    if (!v) return res.status(404).json({ error: 'Fordon hittades inte' });
+    const since = req.query.since;
+    let history = v.history || [];
+    if (since && since !== 'all') {
+      const sinceDate = new Date(parseInt(since));
+      history = history.filter(h => new Date(h.time) >= sinceDate);
+    }
+    const rows = history.map(h =>
+      `<tr><td>${h.time}</td><td>${h.productName}</td><td>${h.qty}</td><td>${h.articleNo||'—'}</td><td>${h.supplier||'—'}</td><td>${h.userName||'—'}</td></tr>`
+    ).join('');
+    const html = `<!DOCTYPE html><html lang="sv"><head><meta charset="UTF-8"><title>Export — ${v.regNr}</title>
+    <style>body{font-family:sans-serif;padding:2rem;color:#111}h1{font-size:20px}h2{font-size:15px;color:#555;margin-top:0}table{width:100%;border-collapse:collapse;margin-top:1.5rem;font-size:13px}th{background:#f0f0f0;padding:8px;text-align:left;border-bottom:2px solid #ccc}td{padding:7px 8px;border-bottom:1px solid #e0e0e0}@media print{button{display:none}}</style>
+    </head><body>
+    <button onclick="window.print()" style="margin-bottom:1rem;padding:8px 16px;background:#222;color:#fff;border:none;border-radius:6px;cursor:pointer">🖨 Skriv ut / Spara PDF</button>
+    <h1>${v.regNr} — ${v.make||''} ${v.model||''}</h1>
+    <h2>Kund: ${v.customerName||'—'} &nbsp;|&nbsp; Kontakt: ${v.customerContact||'—'}</h2>
+    <p style="font-size:12px;color:#888">Exporterad: ${new Date().toLocaleString('sv-SE')}</p>
+    <table><thead><tr><th>Tid</th><th>Produkt</th><th>Antal</th><th>Art.nr</th><th>Leverantör</th><th>Användare</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="6" style="color:#888;text-align:center">Inga uttag registrerade</td></tr>'}</tbody></table>
+    </body></html>`;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/api/export/products.csv', authMiddleware, async (req, res) => {
   const products = await Product.find({ tenantId: req.tenantId }).sort({ name: 1 });
   const header = 'Namn,Streckkod,Antal,Artikelnummer,Leverantör\n';

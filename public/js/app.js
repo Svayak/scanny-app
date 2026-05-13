@@ -926,7 +926,14 @@ function exportVehicle(id) {
     ? confirm(`Exportera "${v.regNr}"\n\nOK = Sedan senaste export (${v.lastExportAt})\nAvbryt = Alla uttag`)
     : null;
   const since = (choice === true) ? 'last' : 'all';
-  window.open('/api/vehicles/' + id + '/export?since=' + since, '_blank');
+  const token = localStorage.getItem('scanny_token');
+  fetch('/api/vehicles/' + id + '/export?since=' + since, {
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(r => r.text()).then(html => {
+    const win = window.open('', '_blank');
+    win.document.write(html);
+    win.document.close();
+  }).catch(() => toast('Export misslyckades', 'error'));
 
   // Fråga om stängning efter kort delay
   setTimeout(() => {
