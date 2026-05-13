@@ -1,0 +1,33 @@
+name: MongoDB Backup
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install mongodump
+        run: |
+          wget -qO - https://www.mongodb.org/static/pgp/server-6.0.asc | sudo apt-key add -
+          echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/6.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-6.0.list
+          sudo apt-get update
+          sudo apt-get install -y mongodb-database-tools
+
+      - name: Run backup
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          mongodump --uri="${{ secrets.MONGODB_URI }}" --archive=backup-$DATE.gz --gzip
+
+      - name: Upload to Azure Blob Storage
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            DATE=$(date +%Y-%m-%d)
+            az storage blob upload \
+              --connection-string "${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}" \
+              --container-name backups \
+              --name backup-$DATE.gz \
+              --file backup-$DATE.gz
