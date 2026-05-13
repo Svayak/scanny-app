@@ -384,6 +384,14 @@ app.delete('/api/vehicles/:id', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.patch('/api/kiosk/users/:id/last-vehicle', kioskMiddleware, async (req, res) => {
+  try {
+    const { lastVehicleId } = req.body;
+    await User.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, { lastVehicleId });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post('/api/vehicles/:id/log', authMiddleware, async (req, res) => {
   try {
     const { productName, qty, userName, articleNo, supplier } = req.body;

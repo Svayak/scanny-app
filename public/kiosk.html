@@ -593,7 +593,7 @@ async function selectVehicle(vehicleId) {
     // Spara senast använda fordon på användaren
     if (currentUser) {
       currentUser.lastVehicleId = vehicleId;
-      try { await api('PATCH', '/api/users/' + currentUser.id, { lastVehicleId: vehicleId }); } catch(_) {}
+      try { await api('PATCH', '/api/kiosk/users/' + currentUser.id + '/last-vehicle', { lastVehicleId: vehicleId }); } catch(_) {}
     }
   } else {
     currentVehicle = null;
