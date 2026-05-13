@@ -8,6 +8,7 @@ const path       = require('path');
 const cors       = require('cors');
 
 const helmet = require('helmet');
+const mongoSanitize = require('express-mongo-sanitize');
 const rateLimit = require('express-rate-limit');
 const { Tenant, User, Product, Order, Vehicle, Log } = require('./models');
 const { authMiddleware, adminOnly, JWT_SECRET } = require('./auth');
@@ -15,12 +16,19 @@ const { authMiddleware, adminOnly, JWT_SECRET } = require('./auth');
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) callback(null, true);
+    else callback(new Error('CORS blockerad'));
+  },
+  credentials: true
+}));
 app.use(helmet({
   contentSecurityPolicy: false, // Stängs av för att inte bryta inline-scripts
   crossOriginEmbedderPolicy: false,
 }));
-app.use(express.json());
+app.use(express.json({ limit: '10kb' }));
+app.use(mongoSanitize());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Rate limiting ──
