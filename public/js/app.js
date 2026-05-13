@@ -553,15 +553,15 @@ function renderLager() {
     '<tr>' +
     '<td style="font-weight:500">' + esc(p.name) + '</td>' +
     '<td><div class="qty-cell">' +
-      '<button class="btn btn-sm" onclick="adjustQty(' + p.id + ',-1)">−</button>' +
-      '<span class="qty-display" onclick="editQtyInline(' + p.id + ', this)" title="Klicka för att redigera" style="cursor:pointer;text-decoration:underline dotted">' + p.qty + '</span>' +
-      '<button class="btn btn-sm" onclick="adjustQty(' + p.id + ',1)">+</button>' +
+	'<button class="btn btn-sm" onclick="adjustQty(\''+p.id+'\',-1)">−</button>'+
+	'<span class="qty-display" onclick="editQtyInline(\''+p.id+'\',this)">'+p.qty+'</span>'+
+	'<button class="btn btn-sm" onclick="adjustQty(\''+p.id+'\',1)">+</button>'+
     '</div></td>' +
     '<td style="color:var(--text2)">' + esc(p.supplier || '—') + '</td>' +
     '<td>' + badge(p) + '</td>' +
     '<td style="white-space:nowrap">' +
-      '<button class="btn btn-sm" onclick="showEditModal(' + p.id + ')" style="margin-right:4px">Redigera</button>' +
-      '<button class="btn btn-sm btn-danger" onclick="deleteProduct(' + p.id + ')">Ta bort</button>' +
+	'<button class="btn btn-sm" onclick="showEditModal(\''+p.id+'\')">Redigera</button>'+
+	'<button class="btn btn-sm btn-danger" onclick="deleteProduct(\''+p.id+'\')">Ta bort</button>'+
     '</td></tr>'
   ).join('');
 }
