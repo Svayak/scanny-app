@@ -159,7 +159,14 @@ async function api(method, path, body) {
     if (body) headers['Content-Type'] = 'application/json';
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const res  = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
-    if (res.status === 401) { clearToken(); window.location.href = '/login.html'; return; }
+    if (res.status === 401) { clearToken(); window.location.href = '/login'; return; }
+    if (res.status === 403) {
+      const d = await res.json().catch(() => ({}));
+      if (d.error === 'ACCOUNT_PAUSED') {
+        document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0c0f0a;font-family:sans-serif;text-align:center;padding:2rem"><div><div style="font-size:48px;margin-bottom:1rem">⏸</div><h1 style="color:#f0ede8;font-size:24px;margin-bottom:12px">Kontot är pausat</h1><p style="color:#9fa899;font-size:16px;margin-bottom:24px">Din prenumeration är pausad. Kontakta Scanny för att återaktivera.</p><a href="/api/export/products.csv" style="display:inline-block;padding:12px 24px;background:#4ade80;color:#0c0f0a;border-radius:8px;text-decoration:none;font-weight:700;margin-bottom:12px">Exportera lager som CSV</a><br><p style="color:#6b7265;font-size:13px;margin-top:16px">Kontakt: <a href="mailto:info@scanny.se" style="color:#4ade80">info@scanny.se</a></p></div></div>';
+        return;
+      }
+    }
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Serverfel');
     return data;

@@ -63,11 +63,22 @@ app.post('/api/auth/login', async (req, res) => {
     if (!user) return res.status(401).json({ error: 'Fel e-post eller lösenord' });
     const match = await bcrypt.compare(password, user.password);
     if (!match) return res.status(401).json({ error: 'Fel e-post eller lösenord' });
+    const tenant = await Tenant.findById(user.tenantId);
+    if (tenant?.status === 'paused') return res.status(403).json({ error: 'ACCOUNT_PAUSED' });
     const token = jwt.sign({ userId: user._id, tenantId: user.tenantId, role: user.role, name: user.name }, JWT_SECRET, { expiresIn: '7d' });
     const tenant = await Tenant.findById(user.tenantId);
     res.json({ token, user: { id: user._id, name: user.name, email: user.email, role: user.role }, tenant: { name: tenant?.name, slug: tenant?.slug } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// Middleware som kollar om tenant är pausad
+async function checkTenantActive(req, res, next) {
+  try {
+    const tenant = await Tenant.findById(req.tenantId);
+    if (tenant?.status === 'paused') return res.status(403).json({ error: 'ACCOUNT_PAUSED' });
+    next();
+  } catch(err) { next(); }
+}
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   try {
@@ -130,7 +141,7 @@ app.delete('/api/products/:id', authMiddleware, async (req, res) => {
 //  SKANNING
 // ══════════════════════════════════════════
 
-app.post('/api/scan', authMiddleware, async (req, res) => {
+app.post('/api/scan', authMiddleware, checkTenantActive, async (req, res) => {
   try {
     const { code } = req.body;
     const p = await Product.findOne({ tenantId: req.tenantId, code: code?.trim() });
@@ -164,7 +175,7 @@ app.post('/api/scan', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/add', authMiddleware, async (req, res) => {
+app.post('/api/add', authMiddleware, checkTenantActive, async (req, res) => {
   try {
     const { code } = req.body;
     const p = await Product.findOne({ tenantId: req.tenantId, code: code?.trim() });
@@ -385,7 +396,7 @@ app.get('/api/export/products.csv', authMiddleware, async (req, res) => {
 //  DB (samlad data för frontend)
 // ══════════════════════════════════════════
 
-app.get('/api/db', authMiddleware, async (req, res) => {
+app.get('/api/db', authMiddleware, checkTenantActive, async (req, res) => {
   try {
     const [products, orders, users, vehicles, logs, tenant] = await Promise.all([
       Product.find({ tenantId: req.tenantId }).sort({ name: 1 }),
