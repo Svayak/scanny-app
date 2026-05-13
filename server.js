@@ -325,7 +325,7 @@ app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
     const user = await User.create({
       tenantId: req.tenantId, name,
       email: fakeEmail, password: hashed,
-      role: 'staff', color: color || randomColor(),
+      role: 'staff', color: color || randomColor(), initials: name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2),
       permissions: permissions || { canScan: true, canAdd: true, canInventory: false }
     });
     await addLog(req.tenantId, `Ny användare: ${name}`);
