@@ -45,7 +45,7 @@
         <span class="order-badge" id="order-count" style="display:none">0</span>
       </a>
     
-      <a class="nav-item" id="kiosk-link" href="#" target="_blank" style="color:var(--accent)">
+      <a class="nav-item" id="kiosk-link" href="#" onclick="openKiosk(event)" style="color:var(--accent)">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
         Öppna kiosk
       </a>
@@ -450,6 +450,11 @@ if (!localStorage.getItem('scanny_token')) {
   window.location.href = '/login';
 }
 
+function openKiosk(e) {
+  e.preventDefault();
+  const s = window.location.pathname.split('/')[1];
+  if (s) window.open('/kiosk/' + s, '_blank');
+}
 const slug = window.location.pathname.split('/')[1];
 const kioskLinkEl = document.getElementById('kiosk-link');
 if (kioskLinkEl && slug) kioskLinkEl.href = '/kiosk/' + slug;
