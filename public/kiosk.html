@@ -576,7 +576,7 @@ function filterVehicles() {
     return;
   }
   list.innerHTML = filtered.map(v => `
-    <div class="vehicle-item ${v.id === lastUsedId ? 'last-used' : ''}" onclick="selectVehicle(${v.id})">
+    <div class="vehicle-item ${v.id === lastUsedId ? 'last-used' : ''}" onclick="selectVehicle('${v.id}')">
       <div>
         <div class="vehicle-reg">${esc(v.regNr)}</div>
         <div class="vehicle-info">${esc([v.make, v.model, v.color].filter(Boolean).join(' '))}</div>
