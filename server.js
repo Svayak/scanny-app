@@ -326,7 +326,11 @@ app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
       tenantId: req.tenantId, name,
       email: fakeEmail, password: hashed,
       role: 'staff', color: color || randomColor(), initials: name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2),
-      permissions: permissions || { canScan: true, canAdd: true, canInventory: false }
+      permissions: permissions ? {
+        canScan: permissions.canScan ?? permissions.scan ?? true,
+        canAdd: permissions.canAdd ?? permissions.add ?? false,
+        canInventory: permissions.canInventory ?? permissions.inventory ?? false,
+      } : { canScan: true, canAdd: false, canInventory: false }
     });
     await addLog(req.tenantId, `Ny användare: ${name}`);
     res.json({ id: user._id, name: user.name, color: user.color, permissions: user.permissions });
