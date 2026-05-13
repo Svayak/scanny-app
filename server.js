@@ -483,6 +483,7 @@ app.get('/api/superadmin/stats', superAdmin, async (req, res) => {
 
 
 // ── Rena URL:er ──
+app.get('/',           (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));
 app.get('/login',      (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/superadmin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'superadmin.html')));
 app.get('/app',        (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
@@ -504,6 +505,17 @@ app.post('/api/kiosk/token', async (req, res) => {
     );
     res.json({ token, tenantName: tenant.name });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Tenant slug routing ──
+app.get('/:slug', async (req, res, next) => {
+  const reserved = ['login','superadmin','app','kiosk','api','favicon.svg'];
+  if (reserved.includes(req.params.slug)) return next();
+  try {
+    const tenant = await Tenant.findOne({ slug: req.params.slug });
+    if (!tenant) return next();
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  } catch(err) { next(); }
 });
 
 // ── Start ──
