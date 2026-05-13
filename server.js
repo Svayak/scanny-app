@@ -7,6 +7,7 @@ const nodemailer = require('nodemailer');
 const path       = require('path');
 const cors       = require('cors');
 
+const rateLimit = require('express-rate-limit');
 const { Tenant, User, Product, Order, Vehicle, Log } = require('./models');
 const { authMiddleware, adminOnly, JWT_SECRET } = require('./auth');
 
@@ -15,7 +16,25 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
+app.use('/api/', apiLimiter);
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ── Rate limiting ──
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minuter
+  max: 10, // max 10 försök per IP
+  message: { error: 'För många inloggningsförsök. Försök igen om 15 minuter.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minut
+  max: 200, // max 200 anrop per minut per IP
+  message: { error: 'För många anrop. Försök igen om en stund.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // ── MongoDB ──
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost/scanny')
@@ -55,7 +74,7 @@ async function sendOrderEmail(settings, pendingOrders) {
 //  AUTH
 // ══════════════════════════════════════════
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', loginLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'E-post och lösenord krävs' });
@@ -122,7 +141,17 @@ app.post('/api/products', authMiddleware, async (req, res) => {
 
 app.patch('/api/products/:id', authMiddleware, async (req, res) => {
   try {
-    const product = await Product.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, req.body, { new: true });
+    const { name, code, qty, min, critical, orderQty, articleNo, supplier } = req.body;
+    const allowed = {};
+    if (name !== undefined) allowed.name = name;
+    if (code !== undefined) allowed.code = code;
+    if (qty !== undefined) allowed.qty = parseInt(qty);
+    if (min !== undefined) allowed.min = parseInt(min);
+    if (critical !== undefined) allowed.critical = parseInt(critical);
+    if (orderQty !== undefined) allowed.orderQty = parseInt(orderQty);
+    if (articleNo !== undefined) allowed.articleNo = articleNo;
+    if (supplier !== undefined) allowed.supplier = supplier;
+    const product = await Product.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, allowed, { new: true });
     if (!product) return res.status(404).json({ error: 'Produkt hittades inte' });
     res.json(product);
   } catch (err) { res.status(500).json({ error: err.message }); }
