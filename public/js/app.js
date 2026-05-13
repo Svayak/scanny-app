@@ -237,7 +237,7 @@ function showAdminSub(name) {
 }
 
 document.querySelectorAll('.nav-item, .mobile-nav a').forEach(el => {
-  el.addEventListener('click', e => { e.preventDefault(); showTab(el.dataset.tab); });
+  el.addEventListener('click', e => { if (el.id === 'kiosk-link') return; e.preventDefault(); showTab(el.dataset.tab); });
 });
 
 // ═══════════════════════════════════════════════════════════════
