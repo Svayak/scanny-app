@@ -146,23 +146,18 @@ app.post('/api/scan', authMiddleware, async (req, res) => {
         await Order.create({ tenantId: req.tenantId, productId: p._id, name: p.name, code: p.code, orderQty: p.orderQty, supplier: p.supplier, articleNo: p.articleNo });
         await addLog(req.tenantId, `BESTÄLLNING skapad: ${p.name}`, 'order');
         orderCreated = true;
-	const tenant = await Tenant.findById(req.tenantId);
-        if (tenant?.settings?.smtpUser && tenant?.settings?.smtpPass) {
-          const pending = await Order.find({ tenantId: req.tenantId, sent: false });
-          sendOrderEmail(tenant.settings, pending)
-            .then(() => addLog(req.tenantId, `E-post skickad automatiskt`, 'order'))
-            .catch(err => addLog(req.tenantId, `E-post misslyckades: ${err.message}`, 'warn'));
-        }
-
-if (p.qty <= p.critical) {
-      const tenant2 = await Tenant.findById(req.tenantId);
-      if (tenant2?.settings?.smtpUser && tenant2?.settings?.smtpPass) {
-        const pending2 = await Order.find({ tenantId: req.tenantId, sent: false });
-        sendOrderEmail(tenant2.settings, pending2)
-          .then(() => addLog(req.tenantId, `KRITISK — e-post skickad: ${p.name}`, 'order'))
-          .catch(err => addLog(req.tenantId, `E-post misslyckades: ${err.message}`, 'warn'));
       }
     }
+    if (p.qty <= p.critical) {
+      const tc = await Tenant.findById(req.tenantId);
+      if (tc?.settings?.smtpUser && tc?.settings?.smtpPass) {
+        const s = tc.settings;
+        const tr = nodemailer.createTransport({ host: s.smtpHost||'smtp.gmail.com', port: s.smtpPort||587, secure: false, auth: { user: s.smtpUser, pass: s.smtpPass } });
+        const now = new Date().toLocaleString('sv-SE');
+        const text = `KRITISK LAGERVARNING — ${s.workshop}\n${now}\n\nProdukten "${p.name}" har nått kritisk lagernivå!\n\n  Aktuellt antal:    ${p.qty} st\n  Kritisk nivå:      ${p.critical} st\n  Artikelnummer:  ${p.articleNo||'—'}\n  Leverantör:       ${p.supplier||'—'}\n  Streckkod:        ${p.code}\n\nÅtgärd krävs omgående!\n\nVänliga hälsningar,\nScanny — ${s.workshop}`;
+        tr.sendMail({ from: `"Scanny" <${s.smtpUser}>`, to: s.email, subject: `⚠️ KRITISKT: ${p.name} — ${s.workshop}`, text })
+          .then(() => addLog(req.tenantId, `KRITISK — e-post skickad: ${p.name}`, 'order'))
+          .catch(err => addLog(req.tenantId, `E-post misslyckades: ${err.message}`, 'warn'));
       }
     }
     res.json({ product: p, orderCreated });
