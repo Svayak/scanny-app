@@ -788,6 +788,8 @@ function renderSettings() {
 }
 
 function renderAll() {
+  const workshopEl = document.getElementById("workshop-name");
+  if (workshopEl) workshopEl.textContent = db.settings?.workshop || "";
   renderMetrics();
   renderQuickGrid();
   renderLager();
