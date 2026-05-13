@@ -384,7 +384,7 @@ app.delete('/api/vehicles/:id', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.patch('/api/kiosk/users/:id/last-vehicle', kioskMiddleware, async (req, res) => {
+app.patch('/api/kiosk/users/:id/last-vehicle', authMiddleware, async (req, res) => {
   try {
     const { lastVehicleId } = req.body;
     await User.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, { lastVehicleId });
