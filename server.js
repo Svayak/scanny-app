@@ -7,6 +7,7 @@ const nodemailer = require('nodemailer');
 const path       = require('path');
 const cors       = require('cors');
 
+const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { Tenant, User, Product, Order, Vehicle, Log } = require('./models');
 const { authMiddleware, adminOnly, JWT_SECRET } = require('./auth');
@@ -15,6 +16,10 @@ const app  = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
+app.use(helmet({
+  contentSecurityPolicy: false, // Stängs av för att inte bryta inline-scripts
+  crossOriginEmbedderPolicy: false,
+}));
 app.use(express.json());
 app.use('/api/', apiLimiter);
 app.use(express.static(path.join(__dirname, 'public')));
