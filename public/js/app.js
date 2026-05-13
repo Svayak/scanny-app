@@ -825,7 +825,7 @@ function renderUsers() {
           <div class="oc-detail">Behörigheter: ${permLabel(u.permissions)}</div>
         </div>
       </div>
-      <button class="btn btn-sm btn-danger" onclick="deleteUser(${u.id})">Ta bort</button>
+      <button class="btn btn-sm btn-danger" onclick="deleteUser('${u.id}')">Ta bort</button>
     </div>`).join('');
 }
 
