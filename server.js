@@ -486,7 +486,7 @@ app.get('/api/superadmin/stats', superAdmin, async (req, res) => {
 app.get('/',           (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));
 app.get('/login',      (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/superadmin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'superadmin.html')));
-app.get('/app',        (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/app',        (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.get('/kiosk/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'kiosk.html')));
 app.get('/kiosk',      (req, res) => res.sendFile(path.join(__dirname, 'public', 'kiosk.html')));
 
@@ -514,7 +514,7 @@ app.get('/:slug', async (req, res, next) => {
   try {
     const tenant = await Tenant.findOne({ slug: req.params.slug });
     if (!tenant) return next();
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
   } catch(err) { next(); }
 });
 
