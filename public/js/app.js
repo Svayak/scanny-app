@@ -882,12 +882,12 @@ function renderVehicles() {
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           ${!isArchived ? `
-            <button class="btn btn-sm" onclick="exportVehicle(${v.id})">📄 Exportera</button>
-            <button class="btn btn-sm" onclick="archiveVehicle(${v.id})" style="border-color:var(--warn);color:var(--warn)">🔒 Stäng</button>
+            <button class="btn btn-sm" onclick="exportVehicle('${v.id}')">📄 Exportera</button>
+            <button class="btn btn-sm" onclick="archiveVehicle('${v.id}')" style="border-color:var(--warn);color:var(--warn)">🔒 Stäng</button>
           ` : `
-            <button class="btn btn-sm" onclick="unarchiveVehicle(${v.id})" style="border-color:var(--accent);color:var(--accent)">🔓 Återöppna</button>
+            <button class="btn btn-sm" onclick="unarchiveVehicle('${v.id}')" style="border-color:var(--accent);color:var(--accent)">🔓 Återöppna</button>
           `}
-          <button class="btn btn-sm btn-danger" onclick="deleteVehicle(${v.id})">Ta bort</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteVehicle('${v.id}')">Ta bort</button>
         </div>
       </div>
       ${(v.history||[]).length > 0 ? `
