@@ -21,7 +21,6 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 app.use(express.json());
-app.use('/api/', apiLimiter);
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Rate limiting ──
@@ -40,6 +39,8 @@ const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+app.use('/api/', apiLimiter);
 
 // ── MongoDB ──
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost/scanny')
