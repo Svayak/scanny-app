@@ -30,6 +30,18 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .k-status{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text3)}
 .status-dot{width:9px;height:9px;border-radius:50%;background:#22c55e}
 .status-dot.error{background:var(--danger)}
+#screen-login{background:var(--bg);align-items:center;justify-content:center}
+.login-box{background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius-lg);padding:40px 32px;width:100%;max-width:380px;text-align:center}
+.login-logo{display:flex;align-items:center;justify-content:center;gap:10px;font-size:24px;font-weight:800;color:var(--accent);margin-bottom:8px}
+.login-sub{font-size:14px;color:var(--text3);margin-bottom:28px}
+.login-field{display:flex;flex-direction:column;gap:6px;text-align:left;margin-bottom:16px}
+.login-field label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3)}
+.login-field input{padding:12px 14px;background:var(--surface2);border:1px solid var(--border2);border-radius:12px;color:var(--text);font-size:15px;outline:none;transition:border-color .2s;font-family:inherit}
+.login-field input:focus{border-color:var(--accent)}
+.login-btn{width:100%;padding:14px;background:var(--accent);color:#0c0f0a;border:none;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer;margin-top:8px;font-family:inherit;transition:background .2s}
+.login-btn:hover{background:var(--accent-dark)}
+.login-error{font-size:13px;color:var(--danger);margin-top:12px;min-height:20px}
+
 
 /* ════════════════════
    VÄLJ ANVÄNDARE
@@ -369,6 +381,39 @@ function getInitials(name) {
 
 // ── Kiosk slug & token ──
 const kioskSlug = window.location.pathname.split('/kiosk/')[1] || '';
+
+const KIOSK_TOKEN_KEY = 'scanny_kiosk_token_' + kioskSlug;
+const KIOSK_TOKEN_EXP = 'scanny_kiosk_exp_' + kioskSlug;
+const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+
+async function kioskLogin() {
+  const email = document.getElementById('kiosk-email').value.trim();
+  const password = document.getElementById('kiosk-password').value;
+  const errEl = document.getElementById('login-error');
+  errEl.textContent = '';
+  if (!email || !password) { errEl.textContent = 'Fyll i e-post och lösenord.'; return; }
+  try {
+    const res = await fetch('/api/auth/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({email, password}) });
+    const data = await res.json();
+    if (!res.ok) { errEl.textContent = data.error || 'Fel e-post eller lösenord.'; return; }
+    if (data.tenant?.slug !== kioskSlug) { errEl.textContent = 'Kontot har inte åtkomst till denna kiosk.'; return; }
+    localStorage.setItem(KIOSK_TOKEN_KEY, data.token);
+    localStorage.setItem(KIOSK_TOKEN_EXP, Date.now() + THIRTY_DAYS);
+    checkKioskAuth();
+  } catch(err) { errEl.textContent = 'Anslutningsfel, försök igen.'; }
+}
+
+function checkKioskAuth() {
+  const token = localStorage.getItem(KIOSK_TOKEN_KEY);
+  const exp = localStorage.getItem(KIOSK_TOKEN_EXP);
+  if (token && exp && Date.now() < parseInt(exp)) { showScreen('screen-users'); initKiosk(); }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('kiosk-email')?.addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('kiosk-password').focus(); });
+  document.getElementById('kiosk-password')?.addEventListener('keydown', e => { if(e.key==='Enter') kioskLogin(); });
+});
+
 let kioskToken  = localStorage.getItem('kiosk_token_' + kioskSlug) || '';
 
 async function initKiosk() {
