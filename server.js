@@ -23,6 +23,14 @@ app.use(cors({
   },
   credentials: true
 }));
+// Tvinga HTTPS i produktion
+app.use((req, res, next) => {
+  if (process.env.NODE_ENV === 'production' && req.headers['x-forwarded-proto'] !== 'https') {
+    return res.redirect(301, 'https://' + req.headers.host + req.url);
+  }
+  next();
+});
+
 app.use(helmet({
   contentSecurityPolicy: false, // Stängs av för att inte bryta inline-scripts
   crossOriginEmbedderPolicy: false,
@@ -33,6 +41,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Rate limiting ──
 const loginLimiter = rateLimit({
+  handler: (req, res) => {
+    console.warn(`[SECURITY] Rate limit: för många inloggningsförsök från ${req.ip}`);
+    res.status(429).json({ error: 'För många inloggningsförsök. Försök igen om 15 minuter.' });
+  },
   windowMs: 15 * 60 * 1000, // 15 minuter
   max: 10, // max 10 försök per IP
   message: { error: 'För många inloggningsförsök. Försök igen om 15 minuter.' },
@@ -93,9 +105,15 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'E-post och lösenord krävs' });
     const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) return res.status(401).json({ error: 'Fel e-post eller lösenord' });
+    if (!user) {
+      console.warn(`[SECURITY] Misslyckad inloggning: ${email} från ${req.ip} - användare finns inte`);
+      return res.status(401).json({ error: 'Fel e-post eller lösenord' });
+    }
     const match = await bcrypt.compare(password, user.password);
-    if (!match) return res.status(401).json({ error: 'Fel e-post eller lösenord' });
+    if (!match) {
+      console.warn(`[SECURITY] Misslyckad inloggning: ${email} från ${req.ip} - fel lösenord`);
+      return res.status(401).json({ error: 'Fel e-post eller lösenord' });
+    }
     const loginTenant = await Tenant.findById(user.tenantId);
     if (loginTenant?.status === 'paused') return res.status(403).json({ error: 'ACCOUNT_PAUSED' });
     const token = jwt.sign({ userId: user._id, tenantId: user.tenantId, role: user.role, name: user.name }, JWT_SECRET, { expiresIn: '7d' });
@@ -458,7 +476,11 @@ app.get('/api/db', authMiddleware, checkTenantActive, async (req, res) => {
 // ── Superadmin middleware ──
 function superAdmin(req, res, next) {
   const secret = req.headers['x-admin-secret'];
-  if (secret !== process.env.ADMIN_SECRET) return res.status(403).json({ error: 'Obehörig' });
+  if (secret !== process.env.ADMIN_SECRET) {
+    console.warn(`[SECURITY] Obehörig superadmin-åtkomst från ${req.ip} till ${req.path}`);
+    return res.status(403).json({ error: 'Obehörig' });
+  }
+  console.log(`[SUPERADMIN] Åtkomst från ${req.ip} till ${req.path}`);
   next();
 }
 
