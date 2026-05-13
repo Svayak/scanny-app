@@ -63,8 +63,8 @@ app.post('/api/auth/login', async (req, res) => {
     if (!user) return res.status(401).json({ error: 'Fel e-post eller lösenord' });
     const match = await bcrypt.compare(password, user.password);
     if (!match) return res.status(401).json({ error: 'Fel e-post eller lösenord' });
-    const tenant = await Tenant.findById(user.tenantId);
-    if (tenant?.status === 'paused') return res.status(403).json({ error: 'ACCOUNT_PAUSED' });
+    const loginTenant = await Tenant.findById(user.tenantId);
+    if (loginTenant?.status === 'paused') return res.status(403).json({ error: 'ACCOUNT_PAUSED' });
     const token = jwt.sign({ userId: user._id, tenantId: user.tenantId, role: user.role, name: user.name }, JWT_SECRET, { expiresIn: '7d' });
     const tenant = await Tenant.findById(user.tenantId);
     res.json({ token, user: { id: user._id, name: user.name, email: user.email, role: user.role }, tenant: { name: tenant?.name, slug: tenant?.slug } });
