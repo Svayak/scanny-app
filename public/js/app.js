@@ -811,9 +811,9 @@ function renderUsers() {
   }
   const permLabel = p => {
     const parts = [];
-    if (p?.scan !== false) parts.push('Uttag');
-    if (p?.add) parts.push('Addera');
-    if (p?.inventory) parts.push('Inventering');
+    if (p?.scan !== false || p?.canScan) parts.push('Uttag');
+    if (p?.add || p?.canAdd) parts.push('Addera');
+    if (p?.inventory || p?.canInventory) parts.push('Inventering');
     return parts.join(', ') || 'Inga behörigheter';
   };
   el.innerHTML = users.map(u => `
