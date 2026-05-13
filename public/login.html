@@ -103,7 +103,8 @@ h1{font-size:20px;font-weight:700;margin-bottom:6px;text-align:center}
 <script>
 // Om redan inloggad — skicka till appen
 if (localStorage.getItem('scanny_token')) {
-  window.location.href = '/app';
+const slug = localStorage.getItem('scanny_slug');
+  window.location.href = slug ? '/' + slug : '/app';
 }
 
 async function handleLogin(e) {
