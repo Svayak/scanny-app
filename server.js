@@ -153,6 +153,16 @@ app.post('/api/scan', authMiddleware, async (req, res) => {
             .then(() => addLog(req.tenantId, `E-post skickad automatiskt`, 'order'))
             .catch(err => addLog(req.tenantId, `E-post misslyckades: ${err.message}`, 'warn'));
         }
+
+if (p.qty <= p.critical) {
+      const tenant2 = await Tenant.findById(req.tenantId);
+      if (tenant2?.settings?.smtpUser && tenant2?.settings?.smtpPass) {
+        const pending2 = await Order.find({ tenantId: req.tenantId, sent: false });
+        sendOrderEmail(tenant2.settings, pending2)
+          .then(() => addLog(req.tenantId, `KRITISK — e-post skickad: ${p.name}`, 'order'))
+          .catch(err => addLog(req.tenantId, `E-post misslyckades: ${err.message}`, 'warn'));
+      }
+    }
       }
     }
     res.json({ product: p, orderCreated });
