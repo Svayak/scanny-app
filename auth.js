@@ -1,5 +1,9 @@
 const jwt = require('jsonwebtoken');
-const JWT_SECRET = process.env.JWT_SECRET || 'scanny-dev-secret-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET saknas — sätt miljövariabeln JWT_SECRET (se .env.example) innan servern startas.');
+  process.exit(1);
+}
 
 function authMiddleware(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');

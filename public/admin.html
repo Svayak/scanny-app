@@ -127,6 +127,8 @@
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <input type="text" id="search-input" class="search-input" placeholder="Sök produkt...">
           <a href="/api/export/products.csv" class="btn" download title="Exportera som CSV">⬇ CSV</a>
+          <input type="file" id="csv-import-input" accept=".csv,text/csv,text/plain" style="display:none" onchange="importCsv(this)">
+          <button class="btn" onclick="document.getElementById('csv-import-input').click()" title="Importera produkter från CSV">⬆ Importera CSV</button>
           <button class="btn btn-primary" onclick="showAddProductModal()">+ Lägg till produkt</button>
         </div>
       </div>

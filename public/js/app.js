@@ -176,6 +176,31 @@ async function api(method, path, body) {
   }
 }
 
+// ── CSV-import ──
+async function importCsv(inputEl) {
+  const file = inputEl.files && inputEl.files[0];
+  inputEl.value = ''; // tillåt att samma fil väljs igen
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const token = getToken();
+    const res = await fetch('/api/products/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
+      body: text
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Import misslyckades');
+    let msg = `Import klar:\n${data.created} nya, ${data.updated} uppdaterade`;
+    if (data.skipped) msg += `, ${data.skipped} överhoppade`;
+    if (data.errors && data.errors.length) msg += `\n\nProblemrader:\n` + data.errors.join('\n');
+    alert(msg);
+    await loadAll();
+  } catch (err) {
+    alert('Fel vid import: ' + err.message);
+  }
+}
+
 async function loadAll() {
   try {
     db = await api('GET', '/api/db');
@@ -196,6 +221,12 @@ async function loadAll() {
 // Enkel HTML-escaping för att undvika XSS
 function esc(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+// Escapa värde för användning inuti en enkelciterad JS-sträng i ett HTML-attribut (onclick).
+function escJs(str) {
+  return String(str)
+    .replace(/\\/g,'\\\\').replace(/'/g,"\\'")
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 function setStatus(ok) {
@@ -516,7 +547,7 @@ function renderQuickGrid() {
   });
   document.getElementById('quick-grid').innerHTML = sorted.map(p => {
     const cls = p.qty === 0 ? 'danger' : p.qty <= p.min ? 'warn' : 'ok';
-    return '<button class="quick-btn" onclick="scanProduct(\'' + esc(p.code) + '\')">' +
+    return '<button class="quick-btn" onclick="scanProduct(\'' + escJs(p.code) + '\')">' +
       '<div class="qb-name" title="' + esc(p.name) + '">' + esc(p.name) + '</div>' +
       '<div class="qb-row"><span class="qb-code">' + esc(p.code.slice(-6)) + '</span>' +
       '<span class="qb-qty ' + cls + '">' + p.qty + ' st</span></div></button>';

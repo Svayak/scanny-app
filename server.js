@@ -10,7 +10,7 @@ const cors       = require('cors');
 const helmet = require('helmet');
 const mongoSanitize = require('express-mongo-sanitize');
 const rateLimit = require('express-rate-limit');
-const { Tenant, User, Product, Order, Vehicle, Log } = require('./models');
+const { Tenant, User, Product, Order, Vehicle, Log, InventoryReport } = require('./models');
 const ALLOWED_ORIGINS = ['https://scanny.se', 'https://www.scanny.se', 'http://localhost:3001'];
 const { authMiddleware, adminOnly, JWT_SECRET } = require('./auth');
 
@@ -97,6 +97,38 @@ async function sendOrderEmail(settings, pendingOrders) {
   });
 }
 
+// Enkel CSV-parser: hanterar citattecken, samt , eller ; som avgränsare
+function parseCSV(text) {
+  const clean = String(text).replace(/^﻿/, '');
+  const firstLine = clean.split(/\r?\n/)[0] || '';
+  const delim = (firstLine.split(';').length > firstLine.split(',').length) ? ';' : ',';
+  const rows = []; let row = []; let field = ''; let inQ = false;
+  for (let i = 0; i < clean.length; i++) {
+    const c = clean[i];
+    if (inQ) {
+      if (c === '"') { if (clean[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+      else field += c;
+    } else if (c === '"') inQ = true;
+    else if (c === delim) { row.push(field); field = ''; }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else if (c !== '\r') field += c;
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+// Mappning från kolumnrubriker (svenska/engelska) till produktfält
+const CSV_COLS = {
+  name:      ['namn', 'name', 'produkt', 'beskrivning'],
+  code:      ['streckkod', 'kod', 'code', 'barcode', 'ean'],
+  qty:       ['antal', 'qty', 'lager', 'saldo'],
+  min:       ['min', 'miniminivå', 'minnivå', 'minimum'],
+  critical:  ['kritisk', 'kritisk nivå', 'critical'],
+  orderQty:  ['best.antal', 'beställningsantal', 'orderqty', 'beställ', 'beställningsmängd'],
+  articleNo: ['artikelnummer', 'art.nr', 'artikelnr', 'articleno', 'art nr', 'artnr'],
+  supplier:  ['leverantör', 'supplier', 'lev']
+};
+
 // ══════════════════════════════════════════
 //  AUTH
 // ══════════════════════════════════════════
@@ -130,6 +162,39 @@ async function checkTenantActive(req, res, next) {
     if (tenant?.status === 'paused') return res.status(403).json({ error: 'ACCOUNT_PAUSED' });
     next();
   } catch(err) { next(); }
+}
+
+// Hämta agerande användare: inloggad (userId i token) eller kiosk-vald (actorId i body)
+async function getActor(req) {
+  const actorId = req.user?.userId || req.body?.actorId;
+  if (!actorId) return null;
+  try { return await User.findOne({ _id: actorId, tenantId: req.tenantId }); }
+  catch (_) { return null; }
+}
+
+// Behörighetskontroll. Blockerar endast om behörigheten explicit satts till false.
+// Admin har alltid full behörighet. Stödjer både nya (canScan) och gamla (scan) fältnamn.
+function hasPermission(user, key) {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  const p = user.permissions || {};
+  const map = {
+    scan:      p.canScan      ?? p.scan,
+    add:       p.canAdd       ?? p.add,
+    inventory: p.canInventory ?? p.inventory,
+  };
+  return map[key] !== false;
+}
+
+// Middleware-fabrik: kräver en viss behörighet för agerande användare
+function requirePermission(key, label) {
+  return async (req, res, next) => {
+    const actor = await getActor(req);
+    if (!actor) return res.status(403).json({ error: 'Kunde inte identifiera användare — välj användare igen' });
+    if (!hasPermission(actor, key)) return res.status(403).json({ error: `Saknar behörighet för ${label}` });
+    req.actor = actor;
+    next();
+  };
 }
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
@@ -203,7 +268,7 @@ app.delete('/api/products/:id', authMiddleware, async (req, res) => {
 //  SKANNING
 // ══════════════════════════════════════════
 
-app.post('/api/scan', authMiddleware, checkTenantActive, async (req, res) => {
+app.post('/api/scan', authMiddleware, checkTenantActive, requirePermission('scan', 'Uttag'), async (req, res) => {
   try {
     const { code } = req.body;
     const p = await Product.findOne({ tenantId: req.tenantId, code: code?.trim() });
@@ -211,7 +276,7 @@ app.post('/api/scan', authMiddleware, checkTenantActive, async (req, res) => {
     if (p.qty <= 0) return res.status(400).json({ error: `${p.name} är slut på lager` });
     p.qty--;
     await p.save();
-    await addLog(req.tenantId, `Uttag: ${p.name} (kvar: ${p.qty})`);
+    await addLog(req.tenantId, `Uttag: ${p.name} (kvar: ${p.qty})${req.actor ? ` — ${req.actor.name}` : ''}`);
     let orderCreated = false;
     if (p.qty <= p.min) {
       const exists = await Order.findOne({ tenantId: req.tenantId, productId: p._id, sent: false });
@@ -237,14 +302,14 @@ app.post('/api/scan', authMiddleware, checkTenantActive, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/add', authMiddleware, checkTenantActive, async (req, res) => {
+app.post('/api/add', authMiddleware, checkTenantActive, requirePermission('add', 'Addera'), async (req, res) => {
   try {
     const { code } = req.body;
     const p = await Product.findOne({ tenantId: req.tenantId, code: code?.trim() });
     if (!p) { await addLog(req.tenantId, `Okänd streckkod: ${code}`, 'warn'); return res.status(404).json({ error: `Okänd streckkod: ${code}` }); }
     p.qty++;
     await p.save();
-    await addLog(req.tenantId, `Påfyllning: ${p.name} (nu ${p.qty})`);
+    await addLog(req.tenantId, `Påfyllning: ${p.name} (nu ${p.qty})${req.actor ? ` — ${req.actor.name}` : ''}`);
     res.json({ product: p });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -290,11 +355,22 @@ app.patch('/api/orders/:id/sent', authMiddleware, async (req, res) => {
 //  INVENTERING
 // ══════════════════════════════════════════
 
-app.post('/api/inventory-report', authMiddleware, async (req, res) => {
+app.post('/api/inventory-report', authMiddleware, checkTenantActive, requirePermission('inventory', 'Inventering'), async (req, res) => {
   try {
     const { entries } = req.body;
     const diffs = entries.filter(e => e.scanned !== e.previous);
-    await addLog(req.tenantId, `Inventering: ${entries.length} artiklar, ${diffs.length} differenser`, 'order');
+    await addLog(req.tenantId, `Inventering: ${entries.length} artiklar, ${diffs.length} differenser${req.actor ? ` — ${req.actor.name}` : ''}`, 'order');
+    // Spara rapport i historiken
+    const rNow = new Date();
+    await InventoryReport.create({
+      tenantId:  req.tenantId,
+      date:      rNow.toLocaleDateString('sv-SE'),
+      time:      rNow.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }),
+      total:     entries.length,
+      diffCount: diffs.length,
+      actorName: req.actor?.name || '',
+      entries
+    }).catch(() => {});
     const tenant = await Tenant.findById(req.tenantId);
     if (!tenant?.settings?.smtpUser) return res.json({ ok: true, sent: false });
     const s = tenant.settings;
@@ -457,6 +533,10 @@ app.get('/api/logs', authMiddleware, async (req, res) => {
   res.json(await Log.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(100));
 });
 
+app.get('/api/inventory-reports', authMiddleware, async (req, res) => {
+  res.json(await InventoryReport.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(50));
+});
+
 app.get('/api/vehicles/:id/export', authMiddleware, async (req, res) => {
   try {
     const v = await Vehicle.findOne({ _id: req.params.id, tenantId: req.tenantId });
@@ -494,23 +574,74 @@ app.get('/api/export/products.csv', authMiddleware, async (req, res) => {
   res.send('\uFEFF' + header + rows);
 });
 
+// Importera produkter fr\u00E5n CSV (skickas som text/plain, egen parser med st\u00F6rre gr\u00E4ns)
+app.post('/api/products/import', authMiddleware, adminOnly, express.text({ type: '*/*', limit: '2mb' }), async (req, res) => {
+  try {
+    const text = typeof req.body === 'string' ? req.body : '';
+    if (!text.trim()) return res.status(400).json({ error: 'Tom eller ogiltig fil' });
+    const rows = parseCSV(text);
+    if (rows.length < 2) return res.status(400).json({ error: 'Ingen data hittades (beh\u00F6ver rubrikrad + minst en produkt)' });
+
+    const header = rows[0].map(h => h.trim().toLowerCase());
+    const colIdx = {};
+    for (const [field, aliases] of Object.entries(CSV_COLS)) {
+      colIdx[field] = header.findIndex(h => aliases.includes(h));
+    }
+    if (colIdx.name === -1 || colIdx.code === -1) {
+      return res.status(400).json({ error: 'CSV m\u00E5ste inneh\u00E5lla kolumnerna "Namn" och "Streckkod"' });
+    }
+
+    const cell = (row, field) => (colIdx[field] >= 0 ? (row[colIdx[field]] || '').trim() : '');
+    const num = (v, def) => { const n = parseInt(String(v).replace(/[^\d-]/g, ''), 10); return Number.isFinite(n) ? n : def; };
+
+    let created = 0, updated = 0, skipped = 0;
+    const errors = [];
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row.length || row.every(c => !String(c).trim())) continue; // tom rad
+      const name = cell(row, 'name');
+      const code = cell(row, 'code');
+      if (!name || !code) { skipped++; errors.push(`Rad ${i + 1}: saknar namn eller streckkod`); continue; }
+
+      const fields = {
+        name,
+        qty:       num(cell(row, 'qty'), 0),
+        articleNo: cell(row, 'articleNo'),
+        supplier:  cell(row, 'supplier'),
+      };
+      if (colIdx.min >= 0)      fields.min      = num(cell(row, 'min'), 5);
+      if (colIdx.critical >= 0) fields.critical = num(cell(row, 'critical'), 2);
+      if (colIdx.orderQty >= 0) fields.orderQty = num(cell(row, 'orderQty'), 10);
+
+      try {
+        const existing = await Product.findOne({ tenantId: req.tenantId, code });
+        if (existing) { Object.assign(existing, fields); await existing.save(); updated++; }
+        else { await Product.create({ tenantId: req.tenantId, code, ...fields }); created++; }
+      } catch (e) { skipped++; errors.push(`Rad ${i + 1} (${code}): ${e.message}`); }
+    }
+    await addLog(req.tenantId, `CSV-import: ${created} nya, ${updated} uppdaterade, ${skipped} \u00F6verhoppade`);
+    res.json({ ok: true, created, updated, skipped, errors: errors.slice(0, 20) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ══════════════════════════════════════════
 //  DB (samlad data för frontend)
 // ══════════════════════════════════════════
 
 app.get('/api/db', authMiddleware, checkTenantActive, async (req, res) => {
   try {
-    const [products, orders, users, vehicles, logs, tenant] = await Promise.all([
+    const [products, orders, users, vehicles, logs, tenant, inventoryReports] = await Promise.all([
       Product.find({ tenantId: req.tenantId }).sort({ name: 1 }),
       Order.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }),
       User.find({ tenantId: req.tenantId }).select('-password').sort({ name: 1 }),
       Vehicle.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }),
       Log.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(100),
-      Tenant.findById(req.tenantId)
+      Tenant.findById(req.tenantId),
+      InventoryReport.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(50)
     ]);
     const settings = { ...tenant?.settings?.toObject() };
     delete settings.smtpPass;
-    res.json({ products, orders, users, vehicles, logs, settings });
+    res.json({ products, orders, users, vehicles, logs, settings, inventoryReports });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -646,6 +777,44 @@ app.get('/:slug', async (req, res, next) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
   } catch(err) { next(); }
 });
+
+// ══════════════════════════════════════════
+//  SCHEMALAGD BESTÄLLNING (körs varje minut)
+// ══════════════════════════════════════════
+const WEEKDAY_NUM = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
+const SCHEDULE_TZ = 'Europe/Stockholm';
+
+async function runScheduledOrders() {
+  try {
+    const weekdayName = new Date().toLocaleDateString('en-US', { timeZone: SCHEDULE_TZ, weekday: 'long' });
+    const nowDay = WEEKDAY_NUM[weekdayName];
+    const parts = new Intl.DateTimeFormat('en-GB', { timeZone: SCHEDULE_TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date());
+    const hh = parts.find(p => p.type === 'hour').value;
+    const mm = parts.find(p => p.type === 'minute').value;
+    const nowTime = `${hh}:${mm}`;
+
+    const tenants = await Tenant.find({ status: 'active' });
+    for (const t of tenants) {
+      const s = t.settings || {};
+      if (!s.smtpUser || !s.smtpPass || !s.scheduleTime) continue;
+      if (s.scheduleDay === undefined || s.scheduleDay === null) continue;
+      if (Number(s.scheduleDay) !== nowDay || s.scheduleTime !== nowTime) continue;
+
+      const pending = await Order.find({ tenantId: t._id, sent: false });
+      if (!pending.length) { await addLog(t._id, 'Schemalagd beställning: inga aktiva beställningar att skicka'); continue; }
+      try {
+        await sendOrderEmail(s, pending);
+        await Order.updateMany({ tenantId: t._id, sent: false }, { sent: true });
+        await addLog(t._id, `Schemalagd beställning skickad (${pending.length} artiklar)`, 'order');
+      } catch (err) {
+        await addLog(t._id, `Schemalagd beställning misslyckades: ${err.message}`, 'warn');
+      }
+    }
+  } catch (err) {
+    console.error('[SCHEMALÄGGARE] fel:', err.message);
+  }
+}
+setInterval(runScheduledOrders, 60 * 1000);
 
 // ── Start ──
 app.listen(PORT, () => console.log(`

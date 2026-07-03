@@ -15,7 +15,8 @@ const tenantSchema = new mongoose.Schema({
     smtpUser: { type: String, default: '' },
     smtpPass: { type: String, default: '' },
     scheduleDay:  { type: Number, default: 1 },
-    scheduleHour: { type: Number, default: 8 }
+    scheduleHour: { type: Number, default: 8 },
+    scheduleTime: { type: String, default: '' }
   }
 });
 
@@ -89,11 +90,24 @@ const logSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
+// ── Inventeringsrapport ──
+const inventoryReportSchema = new mongoose.Schema({
+  tenantId:  { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true },
+  date:      String,
+  time:      String,
+  total:     Number,
+  diffCount: Number,
+  actorName: { type: String, default: '' },
+  entries:   [{ type: mongoose.Schema.Types.Mixed }],
+  createdAt: { type: Date, default: Date.now }
+});
+
 module.exports = {
   Tenant:  mongoose.model('Tenant',  tenantSchema),
   User:    mongoose.model('User',    userSchema),
   Product: mongoose.model('Product', productSchema),
   Order:   mongoose.model('Order',   orderSchema),
   Vehicle: mongoose.model('Vehicle', vehicleSchema),
-  Log:     mongoose.model('Log',     logSchema)
+  Log:     mongoose.model('Log',     logSchema),
+  InventoryReport: mongoose.model('InventoryReport', inventoryReportSchema)
 };

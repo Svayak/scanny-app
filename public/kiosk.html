@@ -534,19 +534,26 @@ function selectUser(userId) {
   focusInput();
 
   // Om användaren har Uttag — visa fordonspicker direkt
-  if (u.permissions?.scan !== false) {
+  if (canDo(u, 'scan')) {
     showVehicleModal();
   }
 }
 
-function applyPermissions(u) {
+// Läser behörighet, stödjer både nya (canScan) och gamla (scan) fältnamn.
+// Blockerar endast om behörigheten explicit satts till false.
+function canDo(u, key) {
   const p = u.permissions || {};
+  const map = { scan: p.canScan ?? p.scan, add: p.canAdd ?? p.add, inventory: p.canInventory ?? p.inventory };
+  return map[key] !== false;
+}
+
+function applyPermissions(u) {
   const btnOut = document.getElementById('btn-out');
   const btnAdd = document.getElementById('btn-add');
   const btnInv = document.getElementById('btn-inv');
-  if (btnOut) btnOut.classList.toggle('disabled', p.scan === false);
-  if (btnAdd) btnAdd.classList.toggle('disabled', p.add === false);
-  if (btnInv) btnInv.classList.toggle('disabled', p.inventory === false);
+  if (btnOut) btnOut.classList.toggle('disabled', !canDo(u, 'scan'));
+  if (btnAdd) btnAdd.classList.toggle('disabled', !canDo(u, 'add'));
+  if (btnInv) btnInv.classList.toggle('disabled', !canDo(u, 'inventory'));
 }
 
 function updateVehicleBar() {
@@ -772,7 +779,7 @@ async function scanProduct(code) {
 
   const endpoint = currentMode === 'add' ? '/api/add' : '/api/scan';
   try {
-    const res = await api('POST', endpoint, { code });
+    const res = await api('POST', endpoint, { code, actorId: currentUser?.id });
     const p   = res.product;
 
     // Logga uttag på fordon
@@ -860,7 +867,7 @@ async function finishInventory() {
   if (diffs.length===0) { soundSuccess(); showFeedback('ok','✓','Inventering klar!','Ingen differens',null); inventory={}; renderInvList(); setMode('out'); return; }
   if (!confirm('Avsluta inventering? ('+diffs.length+' differenser)')) return;
   for (const e of entries) { try { await api('PATCH','/api/products/'+e.id,{qty:e.scanned}); } catch(_){} }
-  try { await api('POST','/api/inventory-report',{entries}); } catch(_){}
+  try { await api('POST','/api/inventory-report',{entries, actorId: currentUser?.id}); } catch(_){}
   await loadDb(); soundSuccess(); showFeedback('ok','✓','Inventering klar!',diffs.length+' differenser uppdaterade',null);
   inventory={}; renderInvList(); setMode('out');
 }
