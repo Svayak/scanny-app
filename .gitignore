@@ -3,3 +3,5 @@ node_modules/
 data/
 *.pem
 *.log
+.DS_Store
+**/.DS_Store
