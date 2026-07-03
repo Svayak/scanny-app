@@ -61,7 +61,31 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+const kioskLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minut
+  max: 20, // max 20 token-förfrågningar per IP
+  message: { error: 'För många försök. Försök igen om en stund.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 app.use('/api/', apiLimiter);
+
+// Blockera pausade konton på alla API-routes (utom undantagen nedan)
+const PAUSE_EXEMPT = ['/api/auth/login', '/api/auth/me', '/api/kiosk/token', '/api/admin/create-tenant', '/api/export/products.csv'];
+app.use('/api/', async (req, res, next) => {
+  const p = req.originalUrl.split('?')[0];
+  if (PAUSE_EXEMPT.includes(p) || p.startsWith('/api/superadmin')) return next();
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return next(); // låt route-nivåns auth returnera 401
+  let decoded;
+  try { decoded = jwt.verify(token, JWT_SECRET); } catch { return next(); }
+  try {
+    const tenant = await Tenant.findById(decoded.tenantId);
+    if (tenant?.status === 'paused') return res.status(403).json({ error: 'ACCOUNT_PAUSED' });
+  } catch { /* vid DB-fel, låt route hantera */ }
+  next();
+});
 
 // ── MongoDB ──
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost/scanny')
@@ -79,13 +103,28 @@ function addLog(tenantId, msg, type = 'normal') {
   }).catch(() => {});
 }
 
+// Cachad, poolad SMTP-transporter per unik SMTP-konfiguration (återanvänds mellan anrop)
+const transporterCache = new Map();
+function getTransporter(s) {
+  const host = s.smtpHost || 'smtp.gmail.com';
+  const port = s.smtpPort || 587;
+  const key = `${host}:${port}:${s.smtpUser}:${s.smtpPass}`;
+  let tr = transporterCache.get(key);
+  if (!tr) {
+    tr = nodemailer.createTransport({
+      host, port, secure: false,
+      pool: true, maxConnections: 3, maxMessages: 100,
+      auth: { user: s.smtpUser, pass: s.smtpPass }
+    });
+    transporterCache.set(key, tr);
+  }
+  return tr;
+}
+
 async function sendOrderEmail(settings, pendingOrders) {
-  const { email, workshop, smtpHost, smtpPort, smtpUser, smtpPass } = settings;
+  const { email, workshop, smtpUser, smtpPass } = settings;
   if (!smtpUser || !smtpPass) throw new Error('SMTP-uppgifter saknas');
-  const transporter = nodemailer.createTransport({
-    host: smtpHost || 'smtp.gmail.com', port: smtpPort || 587, secure: false,
-    auth: { user: smtpUser, pass: smtpPass }
-  });
+  const transporter = getTransporter(settings);
   const today = new Date().toLocaleDateString('sv-SE');
   const lines = pendingOrders.map((o, i) =>
     `${i+1}. ${o.name}\n   Antal: ${o.orderQty} st\n   Art.nr/info: ${o.supplier || '—'}\n   Streckkod: ${o.code}`
@@ -290,7 +329,7 @@ app.post('/api/scan', authMiddleware, checkTenantActive, requirePermission('scan
       const tc = await Tenant.findById(req.tenantId);
       if (tc?.settings?.smtpUser && tc?.settings?.smtpPass) {
         const s = tc.settings;
-        const tr = nodemailer.createTransport({ host: s.smtpHost||'smtp.gmail.com', port: s.smtpPort||587, secure: false, auth: { user: s.smtpUser, pass: s.smtpPass } });
+        const tr = getTransporter(s);
         const now = new Date().toLocaleString('sv-SE');
         const text = `KRITISK LAGERVARNING — ${s.workshop}\n${now}\n\nProdukten "${p.name}" har nått kritisk lagernivå!\n\n  Aktuellt antal:    ${p.qty} st\n  Kritisk nivå:      ${p.critical} st\n  Artikelnummer:  ${p.articleNo||'—'}\n  Leverantör:       ${p.supplier||'—'}\n  Streckkod:        ${p.code}\n\nÅtgärd krävs omgående!\n\nVänliga hälsningar,\nScanny — ${s.workshop}`;
         tr.sendMail({ from: `"Scanny" <${s.smtpUser}>`, to: s.email, subject: `⚠️ KRITISKT: ${p.name} — ${s.workshop}`, text })
@@ -374,7 +413,7 @@ app.post('/api/inventory-report', authMiddleware, checkTenantActive, requirePerm
     const tenant = await Tenant.findById(req.tenantId);
     if (!tenant?.settings?.smtpUser) return res.json({ ok: true, sent: false });
     const s = tenant.settings;
-    const transporter = nodemailer.createTransport({ host: s.smtpHost||'smtp.gmail.com', port: s.smtpPort||587, secure: false, auth: { user: s.smtpUser, pass: s.smtpPass } });
+    const transporter = getTransporter(s);
     const now = new Date().toLocaleString('sv-SE');
     const diffRows = diffs.map(e => { const d = e.scanned-e.previous; return `  ${d>0?'↑':'↓'} ${e.name}: System ${e.previous} → Räknat ${e.scanned} (${d>0?'+':''}${d})`; }).join('\n');
     const okRows = entries.filter(e => e.scanned===e.previous).map(e => `  ✓ ${e.name}: ${e.scanned} st`).join('\n');
@@ -518,7 +557,9 @@ app.get('/api/settings', authMiddleware, async (req, res) => {
 app.put('/api/settings', authMiddleware, adminOnly, async (req, res) => {
   try {
     const tenant = await Tenant.findById(req.tenantId);
-    Object.assign(tenant.settings, req.body);
+    const body = { ...req.body };
+    if (!body.smtpPass) delete body.smtpPass; // behåll befintligt lösenord om fältet lämnas tomt
+    Object.assign(tenant.settings, body);
     tenant.markModified('settings');
     await tenant.save();
     res.json({ ok: true });
@@ -751,7 +792,7 @@ app.get('/kiosk/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public'
 app.get('/kiosk',      (req, res) => res.sendFile(path.join(__dirname, 'public', 'kiosk.html')));
 
 // ── Kiosk token — hämta JWT via slug (ingen inloggning krävs) ──
-app.post('/api/kiosk/token', async (req, res) => {
+app.post('/api/kiosk/token', kioskLimiter, async (req, res) => {
   try {
     const slug = req.body.slug || req.query.slug;
     if (!slug) return res.status(400).json({ error: 'Slug krävs' });
