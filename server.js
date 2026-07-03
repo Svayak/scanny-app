@@ -33,8 +33,25 @@ app.use((req, res, next) => {
 });
 
 app.use(helmet({
-  contentSecurityPolicy: false, // Stängs av för att inte bryta inline-scripts
+  contentSecurityPolicy: {
+    useDefaults: true,
+    directives: {
+      defaultSrc: ["'self'"],
+      // 'unsafe-inline' krävs pga inline-scripts/onclick i HTML; övriga direktiv härdar ändå
+      scriptSrc: ["'self'", "'unsafe-inline'", 'https://unpkg.com'],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+      imgSrc: ["'self'", 'data:', 'blob:'],
+      mediaSrc: ["'self'", 'blob:'],
+      connectSrc: ["'self'", 'https://formspree.io'],
+      formAction: ["'self'", 'https://formspree.io'],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      frameAncestors: ["'self'"],
+    },
+  },
   crossOriginEmbedderPolicy: false,
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
 }));
 app.use(express.json({ limit: '10kb' }));
 app.use(mongoSanitize());
@@ -69,6 +86,20 @@ const kioskLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Striktare gräns för superadmin (skyddar x-admin-secret mot brute force)
+const superadminLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 30,
+  handler: (req, res) => { console.warn(`[SECURITY] Rate limit superadmin från ${req.ip}`); res.status(429).json({ error: 'För många försök.' }); },
+  standardHeaders: true, legacyHeaders: false,
+});
+
+// Gräns för CSV-import (resurskrävande)
+const importLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, max: 20,
+  message: { error: 'För många importer. Försök igen senare.' },
+  standardHeaders: true, legacyHeaders: false,
+});
+
 app.use('/api/', apiLimiter);
 
 // Blockera pausade konton på alla API-routes (utom undantagen nedan)
@@ -101,6 +132,17 @@ function addLog(tenantId, msg, type = 'normal') {
     date: now.toLocaleDateString('sv-SE'),
     msg, type
   }).catch(() => {});
+}
+
+// Loggar felet internt men returnerar ett generiskt meddelande till klienten
+function serverError(res, err) {
+  console.error('[FEL]', err);
+  return res.status(500).json({ error: 'Internt serverfel' });
+}
+
+// Escapar värden för säker inbäddning i HTML (används i serverrenderad export)
+function escHtml(v) {
+  return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // Cachad, poolad SMTP-transporter per unik SMTP-konfiguration (återanvänds mellan anrop)
@@ -191,7 +233,7 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
     const token = jwt.sign({ userId: user._id, tenantId: user.tenantId, role: user.role, name: user.name }, JWT_SECRET, { expiresIn: '7d' });
     const tenant = await Tenant.findById(user.tenantId);
     res.json({ token, user: { id: user._id, name: user.name, email: user.email, role: user.role }, tenant: { name: tenant?.name, slug: tenant?.slug } });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 // Middleware som kollar om tenant är pausad
@@ -205,7 +247,8 @@ async function checkTenantActive(req, res, next) {
 
 // Hämta agerande användare: inloggad (userId i token) eller kiosk-vald (actorId i body)
 async function getActor(req) {
-  const actorId = req.user?.userId || req.body?.actorId;
+  // Agerande användare hämtas ENDAST från den signerade token (aldrig från request-body)
+  const actorId = req.user?.userId;
   if (!actorId) return null;
   try { return await User.findOne({ _id: actorId, tenantId: req.tenantId }); }
   catch (_) { return null; }
@@ -241,7 +284,7 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
     const user = await User.findById(req.user.userId).select('-password');
     const tenant = await Tenant.findById(req.tenantId);
     res.json({ user, tenant });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 // Intern route — du skapar verkstäder manuellt
@@ -249,12 +292,12 @@ app.post('/api/admin/create-tenant', async (req, res) => {
   if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET) return res.status(403).json({ error: 'Obehörig' });
   try {
     const { tenantName, adminEmail, adminPassword, adminName } = req.body;
-    const slug = tenantName.toLowerCase().replace(/[^a-z0-9]/g, '-');
+    const slug = tenantName.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now().toString(36);
     const tenant = await Tenant.create({ name: tenantName, slug, settings: { workshop: tenantName } });
-    const hashed = await bcrypt.hash(adminPassword, 10);
+    const hashed = await bcrypt.hash(adminPassword, 12);
     const user = await User.create({ tenantId: tenant._id, name: adminName, email: adminEmail.toLowerCase(), password: hashed, role: 'admin' });
     res.json({ ok: true, tenantId: tenant._id, userId: user._id, slug });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 // ══════════════════════════════════════════
@@ -262,7 +305,7 @@ app.post('/api/admin/create-tenant', async (req, res) => {
 // ══════════════════════════════════════════
 
 app.get('/api/products', authMiddleware, async (req, res) => {
-  res.json(await Product.find({ tenantId: req.tenantId }).sort({ name: 1 }));
+  res.json(await Product.find({ tenantId: req.tenantId }).sort({ name: 1 }).limit(10000));
 });
 
 app.post('/api/products', authMiddleware, async (req, res) => {
@@ -273,7 +316,7 @@ app.post('/api/products', authMiddleware, async (req, res) => {
     const product = await Product.create({ tenantId: req.tenantId, name, code, qty: qty||0, min: min||5, critical: critical||2, orderQty: orderQty||10, articleNo: articleNo||'', supplier: supplier||'' });
     await addLog(req.tenantId, `Ny produkt tillagd: ${name}`);
     res.json(product);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 app.patch('/api/products/:id', authMiddleware, async (req, res) => {
@@ -282,16 +325,17 @@ app.patch('/api/products/:id', authMiddleware, async (req, res) => {
     const allowed = {};
     if (name !== undefined) allowed.name = name;
     if (code !== undefined) allowed.code = code;
-    if (qty !== undefined) allowed.qty = parseInt(qty);
-    if (min !== undefined) allowed.min = parseInt(min);
-    if (critical !== undefined) allowed.critical = parseInt(critical);
-    if (orderQty !== undefined) allowed.orderQty = parseInt(orderQty);
+    const nonNeg = v => Math.max(0, parseInt(v) || 0);
+    if (qty !== undefined) allowed.qty = nonNeg(qty);
+    if (min !== undefined) allowed.min = nonNeg(min);
+    if (critical !== undefined) allowed.critical = nonNeg(critical);
+    if (orderQty !== undefined) allowed.orderQty = nonNeg(orderQty);
     if (articleNo !== undefined) allowed.articleNo = articleNo;
     if (supplier !== undefined) allowed.supplier = supplier;
     const product = await Product.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, allowed, { new: true });
     if (!product) return res.status(404).json({ error: 'Produkt hittades inte' });
     res.json(product);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 app.delete('/api/products/:id', authMiddleware, async (req, res) => {
@@ -300,7 +344,7 @@ app.delete('/api/products/:id', authMiddleware, async (req, res) => {
     if (!product) return res.status(404).json({ error: 'Produkt hittades inte' });
     await addLog(req.tenantId, `Produkt borttagen: ${product.name}`);
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 // ══════════════════════════════════════════
@@ -310,11 +354,16 @@ app.delete('/api/products/:id', authMiddleware, async (req, res) => {
 app.post('/api/scan', authMiddleware, checkTenantActive, requirePermission('scan', 'Uttag'), async (req, res) => {
   try {
     const { code } = req.body;
-    const p = await Product.findOne({ tenantId: req.tenantId, code: code?.trim() });
-    if (!p) { await addLog(req.tenantId, `Okänd streckkod: ${code}`, 'warn'); return res.status(404).json({ error: `Okänd streckkod: ${code}` }); }
-    if (p.qty <= 0) return res.status(400).json({ error: `${p.name} är slut på lager` });
-    p.qty--;
-    await p.save();
+    const trimmed = code?.trim();
+    const existing = await Product.findOne({ tenantId: req.tenantId, code: trimmed });
+    if (!existing) { await addLog(req.tenantId, `Okänd streckkod: ${code}`, 'warn'); return res.status(404).json({ error: `Okänd streckkod: ${code}` }); }
+    // Atomisk minskning — förhindrar race condition och negativt lager
+    const p = await Product.findOneAndUpdate(
+      { tenantId: req.tenantId, code: trimmed, qty: { $gt: 0 } },
+      { $inc: { qty: -1 } },
+      { new: true }
+    );
+    if (!p) return res.status(400).json({ error: `${existing.name} är slut på lager` });
     await addLog(req.tenantId, `Uttag: ${p.name} (kvar: ${p.qty})${req.actor ? ` — ${req.actor.name}` : ''}`);
     let orderCreated = false;
     if (p.qty <= p.min) {
@@ -338,19 +387,22 @@ app.post('/api/scan', authMiddleware, checkTenantActive, requirePermission('scan
       }
     }
     res.json({ product: p, orderCreated });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 app.post('/api/add', authMiddleware, checkTenantActive, requirePermission('add', 'Addera'), async (req, res) => {
   try {
     const { code } = req.body;
-    const p = await Product.findOne({ tenantId: req.tenantId, code: code?.trim() });
+    // Atomisk ökning
+    const p = await Product.findOneAndUpdate(
+      { tenantId: req.tenantId, code: code?.trim() },
+      { $inc: { qty: 1 } },
+      { new: true }
+    );
     if (!p) { await addLog(req.tenantId, `Okänd streckkod: ${code}`, 'warn'); return res.status(404).json({ error: `Okänd streckkod: ${code}` }); }
-    p.qty++;
-    await p.save();
     await addLog(req.tenantId, `Påfyllning: ${p.name} (nu ${p.qty})${req.actor ? ` — ${req.actor.name}` : ''}`);
     res.json({ product: p });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 // ══════════════════════════════════════════
@@ -358,7 +410,7 @@ app.post('/api/add', authMiddleware, checkTenantActive, requirePermission('add',
 // ══════════════════════════════════════════
 
 app.get('/api/orders', authMiddleware, async (req, res) => {
-  res.json(await Order.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }));
+  res.json(await Order.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(10000));
 });
 
 app.post('/api/orders/send', authMiddleware, async (req, res) => {
@@ -370,7 +422,7 @@ app.post('/api/orders/send', authMiddleware, async (req, res) => {
     await Order.updateMany({ tenantId: req.tenantId, sent: false }, { sent: true });
     await addLog(req.tenantId, `Beställning skickad (${pending.length} artiklar)`, 'order');
     res.json({ ok: true, sent: pending.length });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 app.post('/api/orders/mark-sent', authMiddleware, async (req, res) => {
@@ -378,7 +430,7 @@ app.post('/api/orders/mark-sent', authMiddleware, async (req, res) => {
     const result = await Order.updateMany({ tenantId: req.tenantId, sent: false }, { sent: true });
     await addLog(req.tenantId, `${result.modifiedCount} beställningar markerade som skickade`, 'order');
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 app.patch('/api/orders/:id/sent', authMiddleware, async (req, res) => {
@@ -387,7 +439,7 @@ app.patch('/api/orders/:id/sent', authMiddleware, async (req, res) => {
     if (!order) return res.status(404).json({ error: 'Order hittades inte' });
     await addLog(req.tenantId, `Order markerad som skickad: ${order.name}`, 'order');
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 // ══════════════════════════════════════════
@@ -419,7 +471,7 @@ app.post('/api/inventory-report', authMiddleware, checkTenantActive, requirePerm
     const okRows = entries.filter(e => e.scanned===e.previous).map(e => `  ✓ ${e.name}: ${e.scanned} st`).join('\n');
     await transporter.sendMail({ from: `"Scanny" <${s.smtpUser}>`, to: s.email, subject: `Inventeringsrapport — ${s.workshop} ${now}`, text: `Inventeringsrapport — ${s.workshop}\n${now}\n\nTotalt: ${entries.length} artiklar\nMed differens: ${diffs.length}\n\n${diffs.length>0?`DIFFERENSER\n${diffRows}\n\n`:''}UTAN DIFFERENS\n${okRows||'  (inga)'}\n\nVänliga hälsningar,\nScanny` });
     res.json({ ok: true, sent: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 // ══════════════════════════════════════════
@@ -436,7 +488,7 @@ app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
     if (!name) return res.status(400).json({ error: 'Namn krävs' });
     // Kiosk-användare behöver inget e-post eller lösenord
     const fakeEmail = name.toLowerCase().replace(/[^a-z0-9]/g,'.') + '.' + Date.now() + '@kiosk.scanny.internal';
-    const hashed = await bcrypt.hash(Math.random().toString(36), 10);
+    const hashed = await bcrypt.hash(Math.random().toString(36), 12);
     const user = await User.create({
       tenantId: req.tenantId, name,
       email: fakeEmail, password: hashed,
@@ -449,7 +501,7 @@ app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
     });
     await addLog(req.tenantId, `Ny användare: ${name}`);
     res.json({ id: user._id, name: user.name, color: user.color, permissions: user.permissions });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 function randomColor() {
@@ -460,11 +512,11 @@ function randomColor() {
 app.patch('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
   try {
     const update = { ...req.body };
-    if (update.password) { update.password = await bcrypt.hash(update.password, 10); }
+    if (update.password) { update.password = await bcrypt.hash(update.password, 12); }
     const user = await User.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, update, { new: true }).select('-password');
     if (!user) return res.status(404).json({ error: 'Användare hittades inte' });
     res.json(user);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 app.delete('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
@@ -473,7 +525,7 @@ app.delete('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
     if (!user) return res.status(404).json({ error: 'Användare hittades inte' });
     await addLog(req.tenantId, `Användare borttagen: ${user.name}`);
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 // ══════════════════════════════════════════
@@ -481,7 +533,7 @@ app.delete('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
 // ══════════════════════════════════════════
 
 app.get('/api/vehicles', authMiddleware, async (req, res) => {
-  res.json(await Vehicle.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }));
+  res.json(await Vehicle.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(10000));
 });
 
 app.post('/api/vehicles', authMiddleware, async (req, res) => {
@@ -491,7 +543,7 @@ app.post('/api/vehicles', authMiddleware, async (req, res) => {
     const vehicle = await Vehicle.create({ tenantId: req.tenantId, regNr: regNr.toUpperCase(), make, model, color, customerName, customerContact });
     await addLog(req.tenantId, `Fordon tillagt: ${regNr}`);
     res.json(vehicle);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 app.delete('/api/vehicles/:id', authMiddleware, async (req, res) => {
@@ -500,7 +552,7 @@ app.delete('/api/vehicles/:id', authMiddleware, async (req, res) => {
     if (!v) return res.status(404).json({ error: 'Fordon hittades inte' });
     await addLog(req.tenantId, `Fordon borttaget: ${v.regNr}`);
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 app.patch('/api/kiosk/users/:id/last-vehicle', authMiddleware, async (req, res) => {
@@ -508,7 +560,7 @@ app.patch('/api/kiosk/users/:id/last-vehicle', authMiddleware, async (req, res) 
     const { lastVehicleId } = req.body;
     await User.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, { lastVehicleId });
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 app.post('/api/vehicles/:id/log', authMiddleware, async (req, res) => {
@@ -521,7 +573,7 @@ app.post('/api/vehicles/:id/log', authMiddleware, async (req, res) => {
     if (v.history.length > 500) v.history = v.history.slice(0, 500);
     await v.save();
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 app.patch('/api/vehicles/:id/archive', authMiddleware, async (req, res) => {
@@ -530,7 +582,7 @@ app.patch('/api/vehicles/:id/archive', authMiddleware, async (req, res) => {
     if (!v) return res.status(404).json({ error: 'Fordon hittades inte' });
     await addLog(req.tenantId, `Fordon arkiverat: ${v.regNr}`, 'order');
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 app.patch('/api/vehicles/:id/unarchive', authMiddleware, async (req, res) => {
@@ -539,7 +591,7 @@ app.patch('/api/vehicles/:id/unarchive', authMiddleware, async (req, res) => {
     if (!v) return res.status(404).json({ error: 'Fordon hittades inte' });
     await addLog(req.tenantId, `Fordon återöppnat: ${v.regNr}`);
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 // ══════════════════════════════════════════
@@ -563,7 +615,7 @@ app.put('/api/settings', authMiddleware, adminOnly, async (req, res) => {
     tenant.markModified('settings');
     await tenant.save();
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 // ══════════════════════════════════════════
@@ -589,34 +641,35 @@ app.get('/api/vehicles/:id/export', authMiddleware, async (req, res) => {
       history = history.filter(h => new Date(h.time) >= sinceDate);
     }
     const rows = history.map(h =>
-      `<tr><td>${h.time}</td><td>${h.productName}</td><td>${h.qty}</td><td>${h.articleNo||'—'}</td><td>${h.supplier||'—'}</td><td>${h.userName||'—'}</td></tr>`
+      `<tr><td>${escHtml(h.time)}</td><td>${escHtml(h.productName)}</td><td>${escHtml(h.qty)}</td><td>${escHtml(h.articleNo||'—')}</td><td>${escHtml(h.supplier||'—')}</td><td>${escHtml(h.userName||'—')}</td></tr>`
     ).join('');
-    const html = `<!DOCTYPE html><html lang="sv"><head><meta charset="UTF-8"><title>Export — ${v.regNr}</title>
+    const html = `<!DOCTYPE html><html lang="sv"><head><meta charset="UTF-8"><title>Export — ${escHtml(v.regNr)}</title>
     <style>body{font-family:sans-serif;padding:2rem;color:#111}h1{font-size:20px}h2{font-size:15px;color:#555;margin-top:0}table{width:100%;border-collapse:collapse;margin-top:1.5rem;font-size:13px}th{background:#f0f0f0;padding:8px;text-align:left;border-bottom:2px solid #ccc}td{padding:7px 8px;border-bottom:1px solid #e0e0e0}@media print{button{display:none}}</style>
     </head><body>
     <button onclick="window.print()" style="margin-bottom:1rem;padding:8px 16px;background:#222;color:#fff;border:none;border-radius:6px;cursor:pointer">🖨 Skriv ut / Spara PDF</button>
-    <h1>${v.regNr} — ${v.make||''} ${v.model||''}</h1>
-    <h2>Kund: ${v.customerName||'—'} &nbsp;|&nbsp; Kontakt: ${v.customerContact||'—'}</h2>
-    <p style="font-size:12px;color:#888">Exporterad: ${new Date().toLocaleString('sv-SE')}</p>
+    <h1>${escHtml(v.regNr)} — ${escHtml(v.make||'')} ${escHtml(v.model||'')}</h1>
+    <h2>Kund: ${escHtml(v.customerName||'—')} &nbsp;|&nbsp; Kontakt: ${escHtml(v.customerContact||'—')}</h2>
+    <p style="font-size:12px;color:#888">Exporterad: ${escHtml(new Date().toLocaleString('sv-SE'))}</p>
     <table><thead><tr><th>Tid</th><th>Produkt</th><th>Antal</th><th>Art.nr</th><th>Leverantör</th><th>Användare</th></tr></thead>
     <tbody>${rows||'<tr><td colspan="6" style="color:#888;text-align:center">Inga uttag registrerade</td></tr>'}</tbody></table>
     </body></html>`;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 app.get('/api/export/products.csv', authMiddleware, async (req, res) => {
-  const products = await Product.find({ tenantId: req.tenantId }).sort({ name: 1 });
+  const products = await Product.find({ tenantId: req.tenantId }).sort({ name: 1 }).limit(10000);
   const header = 'Namn,Streckkod,Antal,Artikelnummer,Leverantör\n';
-  const rows = products.map(p => [p.name, p.code, p.qty, p.articleNo||'', p.supplier||''].map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const csvSafe = v => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g,'""') + '"'; };
+  const rows = products.map(p => [p.name, p.code, p.qty, p.articleNo||'', p.supplier||''].map(csvSafe).join(',')).join('\n');
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="lager.csv"');
   res.send('\uFEFF' + header + rows);
 });
 
 // Importera produkter fr\u00E5n CSV (skickas som text/plain, egen parser med st\u00F6rre gr\u00E4ns)
-app.post('/api/products/import', authMiddleware, adminOnly, express.text({ type: '*/*', limit: '2mb' }), async (req, res) => {
+app.post('/api/products/import', authMiddleware, adminOnly, importLimiter, express.text({ type: '*/*', limit: '2mb' }), async (req, res) => {
   try {
     const text = typeof req.body === 'string' ? req.body : '';
     if (!text.trim()) return res.status(400).json({ error: 'Tom eller ogiltig fil' });
@@ -633,7 +686,7 @@ app.post('/api/products/import', authMiddleware, adminOnly, express.text({ type:
     }
 
     const cell = (row, field) => (colIdx[field] >= 0 ? (row[colIdx[field]] || '').trim() : '');
-    const num = (v, def) => { const n = parseInt(String(v).replace(/[^\d-]/g, ''), 10); return Number.isFinite(n) ? n : def; };
+    const num = (v, def) => { const n = parseInt(String(v).replace(/[^\d]/g, ''), 10); return Number.isFinite(n) && n >= 0 ? n : def; };
 
     let created = 0, updated = 0, skipped = 0;
     const errors = [];
@@ -662,7 +715,7 @@ app.post('/api/products/import', authMiddleware, adminOnly, express.text({ type:
     }
     await addLog(req.tenantId, `CSV-import: ${created} nya, ${updated} uppdaterade, ${skipped} \u00F6verhoppade`);
     res.json({ ok: true, created, updated, skipped, errors: errors.slice(0, 20) });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 // ══════════════════════════════════════════
@@ -672,10 +725,10 @@ app.post('/api/products/import', authMiddleware, adminOnly, express.text({ type:
 app.get('/api/db', authMiddleware, checkTenantActive, async (req, res) => {
   try {
     const [products, orders, users, vehicles, logs, tenant, inventoryReports] = await Promise.all([
-      Product.find({ tenantId: req.tenantId }).sort({ name: 1 }),
-      Order.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }),
+      Product.find({ tenantId: req.tenantId }).sort({ name: 1 }).limit(10000),
+      Order.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(10000),
       User.find({ tenantId: req.tenantId }).select('-password').sort({ name: 1 }),
-      Vehicle.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }),
+      Vehicle.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(10000),
       Log.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(100),
       Tenant.findById(req.tenantId),
       InventoryReport.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(50)
@@ -683,10 +736,11 @@ app.get('/api/db', authMiddleware, checkTenantActive, async (req, res) => {
     const settings = { ...tenant?.settings?.toObject() };
     delete settings.smtpPass;
     res.json({ products, orders, users, vehicles, logs, settings, inventoryReports });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 // ── Superadmin middleware ──
+app.use('/api/superadmin/', superadminLimiter);
 function superAdmin(req, res, next) {
   const secret = req.headers['x-admin-secret'];
   if (secret !== process.env.ADMIN_SECRET) {
@@ -712,7 +766,7 @@ app.get('/api/superadmin/tenants', superAdmin, async (req, res) => {
       return { ...t.toObject(), userCount, productCount, adminEmail: adminUser?.email, adminName: adminUser?.name };
     }));
     res.json(result);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 // Skapa ny tenant
@@ -722,10 +776,10 @@ app.post('/api/superadmin/tenants', superAdmin, async (req, res) => {
     if (!tenantName || !adminEmail || !adminPassword) return res.status(400).json({ error: 'Namn, e-post och lösenord krävs' });
     const slug = tenantName.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now().toString(36);
     const tenant = await Tenant.create({ name: tenantName, slug, plan: plan || 'bas', settings: { workshop: tenantName } });
-    const hashed = await bcrypt.hash(adminPassword, 10);
+    const hashed = await bcrypt.hash(adminPassword, 12);
     const user = await User.create({ tenantId: tenant._id, name: adminName || tenantName, email: adminEmail.toLowerCase(), password: hashed, role: 'admin' });
     res.json({ ok: true, tenantId: tenant._id, userId: user._id, slug });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 // Uppdatera tenant (pausa, byt plan, byt e-post)
@@ -742,12 +796,12 @@ app.patch('/api/superadmin/tenants/:id', superAdmin, async (req, res) => {
       const admin = await User.findOne({ tenantId: tenant._id, role: 'admin' });
       if (admin) {
         if (adminEmail)   admin.email    = adminEmail.toLowerCase();
-        if (adminPassword) admin.password = await bcrypt.hash(adminPassword, 10);
+        if (adminPassword) admin.password = await bcrypt.hash(adminPassword, 12);
         await admin.save();
       }
     }
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 // Ta bort tenant
@@ -764,7 +818,7 @@ app.delete('/api/superadmin/tenants/:id', superAdmin, async (req, res) => {
       Tenant.findByIdAndDelete(tenant._id)
     ]);
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 // Statistik
@@ -779,7 +833,7 @@ app.get('/api/superadmin/stats', superAdmin, async (req, res) => {
       Tenant.countDocuments({ plan: 'pro' })
     ]);
     res.json({ total, active, paused, cancelled: total - active - paused, plans: { bas, standard, pro } });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
 });
 
 
@@ -805,7 +859,24 @@ app.post('/api/kiosk/token', kioskLimiter, async (req, res) => {
       { expiresIn: '30d' }
     );
     res.json({ token, tenantName: tenant.name });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { serverError(res, err); }
+});
+
+// Kiosk: byt device-token mot en användarspecifik token (agerande användare bäddas in i token)
+app.post('/api/kiosk/user-token', authMiddleware, kioskLimiter, async (req, res) => {
+  try {
+    if (req.user.role !== 'kiosk') return res.status(403).json({ error: 'Endast kiosk' });
+    const tenant = await Tenant.findById(req.tenantId);
+    if (tenant?.status !== 'active') return res.status(403).json({ error: 'Kontot är pausat' });
+    const user = await User.findOne({ _id: req.body.userId, tenantId: req.tenantId });
+    if (!user) return res.status(404).json({ error: 'Användare hittades inte' });
+    const token = jwt.sign(
+      { tenantId: req.tenantId, userId: user._id, role: 'kiosk', name: user.name },
+      JWT_SECRET,
+      { expiresIn: '12h' }
+    );
+    res.json({ token });
+  } catch (err) { serverError(res, err); }
 });
 
 // ── Tenant slug routing ──
