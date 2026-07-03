@@ -831,6 +831,29 @@ function renderAll() {
   renderSettings();
   renderUsers();
   renderVehicles();
+  applyPlanUI();
+}
+
+// ── Paketnivå-UI (kvot + funktionsgrindar) ──
+function applyPlanUI() {
+  const lim = db.planLimits || {};
+  const count = (db.users || []).length;
+  const max = lim.maxUsers; // null = obegränsat
+  const usageEl = document.getElementById('users-usage');
+  if (usageEl) usageEl.textContent = (max == null) ? `${count} användare (obegränsat)` : `${count} / ${max} användare`;
+  const addBtn = document.getElementById('btn-add-user');
+  if (addBtn) {
+    const full = (max != null) && count >= max;
+    addBtn.disabled = full;
+    addBtn.style.opacity = full ? '0.5' : '';
+    addBtn.style.cursor = full ? 'not-allowed' : '';
+    addBtn.title = full ? `Din plan tillåter max ${max} användare` : '';
+  }
+  const schedCard = document.getElementById('schedule-card');
+  const schedUp = document.getElementById('schedule-upgrade');
+  const blocked = lim.scheduledOrders === false;
+  if (schedUp) schedUp.style.display = blocked ? 'block' : 'none';
+  if (schedCard) schedCard.querySelectorAll('select,input,button').forEach(e => { e.disabled = blocked; });
 }
 
 // ── Användare ──
@@ -922,7 +945,7 @@ function renderVehicles() {
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           ${!isArchived ? `
-            <button class="btn btn-sm" onclick="exportVehicle('${v.id}')">📄 Exportera</button>
+            ${(db.planLimits && db.planLimits.pdfExport === false) ? '' : `<button class="btn btn-sm" onclick="exportVehicle('${v.id}')">📄 Exportera</button>`}
             <button class="btn btn-sm" onclick="archiveVehicle('${v.id}')" style="border-color:var(--warn);color:var(--warn)">🔒 Stäng</button>
           ` : `
             <button class="btn btn-sm" onclick="unarchiveVehicle('${v.id}')" style="border-color:var(--accent);color:var(--accent)">🔓 Återöppna</button>

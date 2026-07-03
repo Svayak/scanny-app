@@ -269,8 +269,9 @@
         </div>
         <div style="margin-top:1rem"><button class="btn btn-primary" onclick="saveSettings()">Spara</button></div>
       </div>
-      <div class="card" style="margin-top:1rem">
+      <div class="card" style="margin-top:1rem" id="schedule-card">
         <h3>⏰ Schemalagd beställning</h3>
+        <div id="schedule-upgrade" style="display:none;font-size:13px;color:var(--warn);margin-bottom:.75rem">🔒 Schemalagda beställningar ingår i Standard och Pro. Uppgradera för att aktivera.</div>
         <p style="font-size:13px;color:var(--text2);margin-bottom:1rem">Alla beställningar i kön skickas automatiskt vid vald tid. Kritiska varningar skickas alltid direkt.</p>
         <div class="form-grid">
           <div class="form-group">
@@ -299,7 +300,7 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
         Tillbaka till Admin
       </button>
-      <div class="page-header"><h1>Användare</h1></div>
+      <div class="page-header"><h1>Användare</h1><span id="users-usage" style="font-size:13px;color:var(--text2)"></span></div>
       <div id="users-list"></div>
       <div class="card" style="margin-top:1.5rem">
         <h3>Lägg till användare</h3>
@@ -312,7 +313,7 @@
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="u-perm-add"> Addera</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="u-perm-inv"> Inventering</label>
         </div>
-        <button class="btn btn-primary" style="margin-top:1rem" onclick="addUser()">Lägg till användare</button>
+        <button class="btn btn-primary" style="margin-top:1rem" id="btn-add-user" onclick="addUser()">Lägg till användare</button>
       </div>
     </div>
 

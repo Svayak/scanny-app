@@ -14,6 +14,19 @@ const { Tenant, User, Product, Order, Vehicle, Log, InventoryReport } = require(
 const ALLOWED_ORIGINS = ['https://scanny.se', 'https://www.scanny.se', 'http://localhost:3001'];
 const { authMiddleware, adminOnly, JWT_SECRET } = require('./auth');
 
+// ── Paketnivåer (matchar priserna på landningssidan) ──
+const PLAN_LIMITS = {
+  bas:      { maxUsers: 10,       scheduledOrders: false, inventoryReports: false, pdfExport: false, api: false },
+  standard: { maxUsers: 25,       scheduledOrders: true,  inventoryReports: true,  pdfExport: true,  api: false },
+  pro:      { maxUsers: Infinity, scheduledOrders: true,  inventoryReports: true,  pdfExport: true,  api: true  },
+};
+function planOf(tenant) { return PLAN_LIMITS[tenant?.plan] || PLAN_LIMITS.bas; }
+// Serialiserbar version (Infinity → null = obegränsat) för frontend
+function planLimitsPublic(tenant) {
+  const p = planOf(tenant);
+  return { maxUsers: p.maxUsers === Infinity ? null : p.maxUsers, scheduledOrders: p.scheduledOrders, inventoryReports: p.inventoryReports, pdfExport: p.pdfExport, api: p.api };
+}
+
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
@@ -449,6 +462,9 @@ app.patch('/api/orders/:id/sent', authMiddleware, async (req, res) => {
 app.post('/api/inventory-report', authMiddleware, checkTenantActive, requirePermission('inventory', 'Inventering'), async (req, res) => {
   try {
     const { entries } = req.body;
+    // Inventeringsrapport (spara + maila) kräver Standard+; själva räkningen/uppdateringen sker på klienten
+    const planTenant = await Tenant.findById(req.tenantId);
+    if (!planOf(planTenant).inventoryReports) return res.json({ ok: true, sent: false, note: 'Inventeringsrapport ingår inte i din plan' });
     const diffs = entries.filter(e => e.scanned !== e.previous);
     await addLog(req.tenantId, `Inventering: ${entries.length} artiklar, ${diffs.length} differenser${req.actor ? ` — ${req.actor.name}` : ''}`, 'order');
     // Spara rapport i historiken
@@ -486,6 +502,11 @@ app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
   try {
     const { name, color, permissions } = req.body;
     if (!name) return res.status(400).json({ error: 'Namn krävs' });
+    // Kvot per paketnivå
+    const tenantForLimit = await Tenant.findById(req.tenantId);
+    const maxUsers = planOf(tenantForLimit).maxUsers;
+    const userCount = await User.countDocuments({ tenantId: req.tenantId });
+    if (userCount >= maxUsers) return res.status(403).json({ error: `Din plan (${tenantForLimit?.plan || 'bas'}) tillåter max ${maxUsers} användare. Uppgradera för fler.` });
     // Kiosk-användare behöver inget e-post eller lösenord
     const fakeEmail = name.toLowerCase().replace(/[^a-z0-9]/g,'.') + '.' + Date.now() + '@kiosk.scanny.internal';
     const hashed = await bcrypt.hash(Math.random().toString(36), 12);
@@ -632,6 +653,11 @@ app.get('/api/inventory-reports', authMiddleware, async (req, res) => {
 
 app.get('/api/vehicles/:id/export', authMiddleware, async (req, res) => {
   try {
+    const exportTenant = await Tenant.findById(req.tenantId);
+    if (!planOf(exportTenant).pdfExport) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.status(403).send('<!DOCTYPE html><html lang="sv"><body style="font-family:sans-serif;padding:2rem;text-align:center"><h2>PDF-export ingår inte i din plan</h2><p>Uppgradera till Standard eller Pro för fordonsexport.</p></body></html>');
+    }
     const v = await Vehicle.findOne({ _id: req.params.id, tenantId: req.tenantId });
     if (!v) return res.status(404).json({ error: 'Fordon hittades inte' });
     const since = req.query.since;
@@ -735,7 +761,8 @@ app.get('/api/db', authMiddleware, checkTenantActive, async (req, res) => {
     ]);
     const settings = { ...tenant?.settings?.toObject() };
     delete settings.smtpPass;
-    res.json({ products, orders, users, vehicles, logs, settings, inventoryReports });
+    res.json({ products, orders, users, vehicles, logs, settings, inventoryReports,
+      plan: tenant?.plan || 'bas', planLimits: planLimitsPublic(tenant), usage: { users: users.length } });
   } catch (err) { serverError(res, err); }
 });
 
@@ -907,6 +934,7 @@ async function runScheduledOrders() {
 
     const tenants = await Tenant.find({ status: 'active' });
     for (const t of tenants) {
+      if (!planOf(t).scheduledOrders) continue; // schemalagda beställningar kräver Standard+
       const s = t.settings || {};
       if (!s.smtpUser || !s.smtpPass || !s.scheduleTime) continue;
       if (s.scheduleDay === undefined || s.scheduleDay === null) continue;
