@@ -1125,6 +1125,22 @@ function closeAddProductModal() {
   document.getElementById('add-product-modal').style.display = 'none';
 }
 
+// Skapar en unik intern streckkod (12 siffror, prefix "2" = internt/butik).
+// Kontrollerar mot befintliga produkter så inga dubbletter uppstår.
+function generateBarcode() {
+  const input = document.getElementById('a-code');
+  if (!input) return;
+  const existing = new Set((db.products || []).map(p => String(p.code)));
+  let code, tries = 0;
+  do {
+    const rnd = Math.floor(Math.random() * 100000).toString().padStart(5, '0');
+    code = '2' + String(Date.now()).slice(-6) + rnd; // 1 + 6 + 5 = 12 siffror
+    tries++;
+  } while (existing.has(code) && tries < 100);
+  input.value = code;
+  toast('Streckkod genererad: ' + code);
+}
+
 const addProductModal = document.getElementById('add-product-modal');
 if (addProductModal) {
   addProductModal.addEventListener('click', e => { if (e.target === addProductModal) closeAddProductModal(); });
