@@ -485,6 +485,25 @@ const kioskLinkEl = document.getElementById('kiosk-link');
 if (kioskLinkEl && slug) kioskLinkEl.href = '/kiosk/' + slug;
 
 </script>
+<!-- Utskriftsyta för etiketter (skrivs ut via webbläsaren till Brother QL-810W) -->
+<div id="print-label" aria-hidden="true">
+  <div class="pl-name"></div>
+  <div class="pl-art"></div>
+  <svg class="pl-bc"></svg>
+</div>
+<style>
+  #print-label{position:fixed;left:-99999px;top:0;width:90mm;text-align:center;font-family:Arial,Helvetica,sans-serif;color:#000;background:#fff}
+  #print-label .pl-name{font-size:11pt;font-weight:700;line-height:1.1;margin-top:1mm}
+  #print-label .pl-art{font-size:8pt;color:#000;margin:0.5mm 0}
+  #print-label .pl-bc{width:86mm;height:14mm}
+  @media print{
+    body *{visibility:hidden !important}
+    #print-label,#print-label *{visibility:visible !important}
+    #print-label{left:0;top:0}
+    @page{size:90mm 29mm;margin:0}
+  }
+</style>
+<script src="https://unpkg.com/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
 <script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
 <script src="/js/app.js"></script>
 </body>

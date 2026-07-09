@@ -1073,15 +1073,29 @@ async function deleteProduct(id) {
   catch (err) { toast(err.message, 'error'); }
 }
 
-// ── Etikettutskrift ──
-async function printLabel(id) {
+// ── Etikettutskrift (via webbläsaren till Brother QL-810W) ──
+function renderLabel(p) {
+  const area = document.getElementById('print-label');
+  if (!area || typeof JsBarcode === 'undefined') {
+    toast('Kunde inte skapa etikett (streckkodsbiblioteket laddades inte).', 'error');
+    return false;
+  }
+  area.querySelector('.pl-name').textContent = p.name || '';
+  area.querySelector('.pl-art').textContent  = p.articleNo ? 'Art.nr: ' + p.articleNo : '';
+  try {
+    JsBarcode(area.querySelector('.pl-bc'), String(p.code || ''),
+      { format: 'CODE128', displayValue: true, height: 44, margin: 0, fontSize: 16 });
+  } catch (e) {
+    toast('Ogiltig streckkod för etikett: ' + e.message, 'error');
+    return false;
+  }
+  return true;
+}
+
+function printLabel(id) {
   const p = db.products.find(x => x.id === id);
   if (!p) return;
-  try {
-    toast('Skickar etikett till skrivaren…');
-    await api('POST', '/api/products/' + id + '/print-label');
-    toast('Etikett utskriven: ' + p.name, 'success');
-  } catch (err) { toast(err.message, 'error'); }
+  if (renderLabel(p)) setTimeout(() => window.print(), 120);
 }
 
 // Öppnar en förhandsvisning av etiketten i nytt fönster (för test utan att skriva ut).
@@ -1136,12 +1150,9 @@ async function addProduct() {
     toast('Produkt tillagd: ' + body.name);
     closeAddProductModal();
     await loadAll();
-    const pid = created && (created.id || created._id);
-    if (doPrint && pid) {
-      try {
-        await api('POST', '/api/products/' + pid + '/print-label');
-        toast('Etikett utskriven: ' + body.name, 'success');
-      } catch (e) { toast('Produkten sparades men utskriften misslyckades: ' + e.message, 'error'); }
+    if (doPrint) {
+      const np = db.products.find(x => x.code === body.code);
+      if (np && renderLabel(np)) setTimeout(() => window.print(), 150);
     }
   } catch (err) { toast(err.message, 'error'); }
 }
