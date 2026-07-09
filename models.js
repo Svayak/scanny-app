@@ -16,7 +16,12 @@ const tenantSchema = new mongoose.Schema({
     smtpPass: { type: String, default: '' },
     scheduleDay:  { type: Number, default: 1 },
     scheduleHour: { type: Number, default: 8 },
-    scheduleTime: { type: String, default: '' }
+    scheduleTime: { type: String, default: '' },
+    printerIp:    { type: String, default: '' },
+    printerModel: { type: String, default: 'QL-810W' },
+    labelSize:    { type: String, default: '29x90' },
+    printerQueue: { type: String, default: '_192_168_10_164' },
+    pageSize:     { type: String, default: 'DC03' }
   }
 });
 

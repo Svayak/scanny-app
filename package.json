@@ -20,6 +20,10 @@
     "mongoose": "^8.0.0",
     "nodemailer": "^9.0.1"
   },
+  "optionalDependencies": {
+    "bwip-js": "^4.5.1",
+    "sharp": "^0.33.5"
+  },
   "overrides": {
     "qs": "^6.15.2"
   }

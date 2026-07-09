@@ -13,6 +13,11 @@ const rateLimit = require('express-rate-limit');
 const { Tenant, User, Product, Order, Vehicle, Log, InventoryReport } = require('./models');
 const ALLOWED_ORIGINS = ['https://scanny.se', 'https://www.scanny.se', 'http://localhost:3001'];
 const { authMiddleware, adminOnly, JWT_SECRET } = require('./auth');
+// Etikettmodulen kräver bwip-js + sharp (valfria beroenden). Ladda skyddat så att
+// servern startar även om de saknas i miljön (t.ex. molndrift utan skrivare).
+let generateLabelPng, printLabel;
+try { ({ generateLabelPng, printLabel } = require('./label')); }
+catch (err) { console.warn('Etikettmodul ej tillgänglig (bwip-js/sharp saknas?):', err.message); }
 
 // ── Paketnivåer (matchar priserna på landningssidan) ──
 const PLAN_LIMITS = {
@@ -52,6 +57,10 @@ app.use(helmet({
       defaultSrc: ["'self'"],
       // 'unsafe-inline' krävs pga inline-scripts/onclick i HTML; övriga direktiv härdar ändå
       scriptSrc: ["'self'", "'unsafe-inline'", 'https://unpkg.com'],
+      // script-src-attr/style-src-attr styr inline onclick/onsubmit/style="" och är 'none' som standard
+      // i helmet — måste tillåtas explicit annars slutar alla knappar (inkl. inloggning) fungera.
+      scriptSrcAttr: ["'unsafe-inline'"],
+      styleSrcAttr: ["'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       fontSrc: ["'self'", 'https://fonts.gstatic.com'],
       imgSrc: ["'self'", 'data:', 'blob:'],
@@ -358,6 +367,33 @@ app.delete('/api/products/:id', authMiddleware, async (req, res) => {
     await addLog(req.tenantId, `Produkt borttagen: ${product.name}`);
     res.json({ ok: true });
   } catch (err) { serverError(res, err); }
+});
+
+// ── Etikett: förhandsvisning (PNG) ──
+app.get('/api/products/:id/label.png', authMiddleware, async (req, res) => {
+  try {
+    if (!generateLabelPng) return res.status(503).json({ error: 'Etikettfunktionen är inte tillgänglig på denna server.' });
+    const product = await Product.findOne({ _id: req.params.id, tenantId: req.tenantId });
+    if (!product) return res.status(404).json({ error: 'Produkt hittades inte' });
+    const tenant = await Tenant.findById(req.tenantId);
+    const png = await generateLabelPng(product, tenant?.settings?.labelSize || '62');
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'no-store');
+    res.send(png);
+  } catch (err) { serverError(res, err); }
+});
+
+// ── Etikett: skriv ut till Brother QL-810W ──
+app.post('/api/products/:id/print-label', authMiddleware, async (req, res) => {
+  try {
+    if (!printLabel) return res.status(503).json({ error: 'Etikettutskrift är inte tillgänglig på denna server.' });
+    const product = await Product.findOne({ _id: req.params.id, tenantId: req.tenantId });
+    if (!product) return res.status(404).json({ error: 'Produkt hittades inte' });
+    const tenant = await Tenant.findById(req.tenantId);
+    await printLabel(product, tenant?.settings || {});
+    await addLog(req.tenantId, `Etikett utskriven: ${product.name}`);
+    res.json({ ok: true });
+  } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
 // ══════════════════════════════════════════

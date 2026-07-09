@@ -5,3 +5,8 @@ data/
 *.log
 .DS_Store
 **/.DS_Store
+
+# lokala testfiler för etikettutskrift
+adr.txt
+test-label*.png
+preview-*.png

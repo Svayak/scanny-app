@@ -599,6 +599,7 @@ function renderLager() {
     '<td>' + badge(p) + '</td>' +
     '<td style="white-space:nowrap">' +
 	'<button class="btn btn-sm" onclick="showEditModal(\''+p.id+'\')">Redigera</button>'+
+	'<button class="btn btn-sm" onclick="printLabel(\''+p.id+'\')" title="Skriv ut etikett">🏷 Etikett</button>'+
 	'<button class="btn btn-sm btn-danger" onclick="deleteProduct(\''+p.id+'\')">Ta bort</button>'+
     '</td></tr>'
   ).join('');
@@ -787,6 +788,13 @@ function renderSettings() {
   document.getElementById('s-host').value     = s.smtpHost || '';
   document.getElementById('s-port').value     = s.smtpPort || 587;
   document.getElementById('s-user').value     = s.smtpUser || '';
+
+  // Etikettskrivare
+  const qEl = document.getElementById('s-printer-queue');
+  if (qEl) {
+    qEl.value = s.printerQueue || '_192_168_10_164';
+    document.getElementById('s-label-size').value = s.labelSize || '62';
+  }
 
   // Schema
   const dayEl  = document.getElementById('s-schedule-day');
@@ -1065,6 +1073,30 @@ async function deleteProduct(id) {
   catch (err) { toast(err.message, 'error'); }
 }
 
+// ── Etikettutskrift ──
+async function printLabel(id) {
+  const p = db.products.find(x => x.id === id);
+  if (!p) return;
+  try {
+    toast('Skickar etikett till skrivaren…');
+    await api('POST', '/api/products/' + id + '/print-label');
+    toast('Etikett utskriven: ' + p.name, 'success');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// Öppnar en förhandsvisning av etiketten i nytt fönster (för test utan att skriva ut).
+async function previewLabel(id) {
+  try {
+    const token = getToken();
+    const res = await fetch('/api/products/' + id + '/label.png', {
+      headers: token ? { 'Authorization': 'Bearer ' + token } : {},
+    });
+    if (!res.ok) throw new Error('Kunde inte generera förhandsvisning');
+    const url = URL.createObjectURL(await res.blob());
+    window.open(url, '_blank');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
 function showAddProductModal() {
   ['a-name','a-code','a-article','a-supplier'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('a-qty').value = '10';
@@ -1097,11 +1129,20 @@ async function addProduct() {
     supplier:  document.getElementById('a-supplier').value.trim()
   };
   if (!body.name || !body.code) { toast('Fyll i namn och streckkod', 'error'); return; }
+  const printEl = document.getElementById('a-print');
+  const doPrint = printEl ? printEl.checked : false;
   try {
-    await api('POST', '/api/products', body);
+    const created = await api('POST', '/api/products', body);
     toast('Produkt tillagd: ' + body.name);
     closeAddProductModal();
     await loadAll();
+    const pid = created && (created.id || created._id);
+    if (doPrint && pid) {
+      try {
+        await api('POST', '/api/products/' + pid + '/print-label');
+        toast('Etikett utskriven: ' + body.name, 'success');
+      } catch (e) { toast('Produkten sparades men utskriften misslyckades: ' + e.message, 'error'); }
+    }
   } catch (err) { toast(err.message, 'error'); }
 }
 
@@ -1119,6 +1160,13 @@ async function saveSettings() {
     scheduleDay:  dayVal !== '' ? parseInt(dayVal) : null,
     scheduleTime: document.getElementById('s-schedule-time').value || '07:00',
   };
+  const qEl = document.getElementById('s-printer-queue');
+  if (qEl) {
+    body.printerQueue = qEl.value.trim() || '_192_168_10_164';
+    body.labelSize    = document.getElementById('s-label-size').value || '62';
+    const pmap = { '62':'62mm','29':'29mm','38':'38mm','50':'50mm','54':'54mm','62x29':'DC06','29x90':'DC03' };
+    body.pageSize     = pmap[body.labelSize] || '62mm';
+  }
   const pass = document.getElementById('s-pass').value;
   if (pass) body.smtpPass = pass;
   try {
