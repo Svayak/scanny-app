@@ -271,19 +271,18 @@
       </div>
       <div class="card" style="margin-top:1rem">
         <h3>🏷 Etikettskrivare (Brother QL-810W)</h3>
-        <p style="font-size:13px;color:var(--text2);margin-bottom:1rem">Skrivs ut via Macens installerade Brother-drivrutin. Utskriftskön är namnet i macOS (se <code>lpstat -p</code>).</p>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:1rem">Etiketter skrivs ut via webbläsaren — välj skrivaren i utskriftsdialogen. Ställ bara in vilken DK-rulle du har i, så får etiketten rätt storlek.</p>
         <div class="form-grid">
-          <div class="form-group"><label>Utskriftskö (CUPS)</label><input id="s-printer-queue" placeholder="_192_168_10_164"></div>
           <div class="form-group">
             <label>Etikettstorlek (DK-rulle)</label>
             <select id="s-label-size" style="padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-size:13px;outline:none">
+              <option value="62x29">62 × 29 mm stansad (DK-11209)</option>
+              <option value="29x90">29 × 90 mm stansad adress (DK-11201)</option>
               <option value="62">62 mm kontinuerlig (DK-22205)</option>
               <option value="29">29 mm kontinuerlig (DK-22210)</option>
               <option value="38">38 mm kontinuerlig (DK-22225)</option>
               <option value="50">50 mm kontinuerlig</option>
               <option value="54">54 mm kontinuerlig</option>
-              <option value="62x29">62 × 29 mm stansad</option>
-              <option value="29x90">29 × 90 mm stansad adress (DK-11201)</option>
             </select>
           </div>
         </div>

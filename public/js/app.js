@@ -791,11 +791,8 @@ function renderSettings() {
   document.getElementById('s-user').value     = s.smtpUser || '';
 
   // Etikettskrivare
-  const qEl = document.getElementById('s-printer-queue');
-  if (qEl) {
-    qEl.value = s.printerQueue || '_192_168_10_164';
-    document.getElementById('s-label-size').value = s.labelSize || '62';
-  }
+  const sizeEl = document.getElementById('s-label-size');
+  if (sizeEl) sizeEl.value = s.labelSize || '62x29';
 
   // Schema
   const dayEl  = document.getElementById('s-schedule-day');
@@ -1206,12 +1203,11 @@ async function saveSettings() {
     scheduleDay:  dayVal !== '' ? parseInt(dayVal) : null,
     scheduleTime: document.getElementById('s-schedule-time').value || '07:00',
   };
-  const qEl = document.getElementById('s-printer-queue');
-  if (qEl) {
-    body.printerQueue = qEl.value.trim() || '_192_168_10_164';
-    body.labelSize    = document.getElementById('s-label-size').value || '62';
+  const sizeEl = document.getElementById('s-label-size');
+  if (sizeEl) {
+    body.labelSize = sizeEl.value || '62x29';
     const pmap = { '62':'62mm','29':'29mm','38':'38mm','50':'50mm','54':'54mm','62x29':'DC06','29x90':'DC03' };
-    body.pageSize     = pmap[body.labelSize] || '62mm';
+    body.pageSize  = pmap[body.labelSize] || '62mm';
   }
   const pass = document.getElementById('s-pass').value;
   if (pass) body.smtpPass = pass;
