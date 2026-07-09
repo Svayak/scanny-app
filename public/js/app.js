@@ -1074,6 +1074,18 @@ async function deleteProduct(id) {
   catch (err) { toast(err.message, 'error'); }
 }
 
+// Utskriftsmått i mm per etikettstorlek (bredd = tejpens bredd, höjd = matningslängd).
+// För 29x90 skrivs designen liggande (90 bred) och drivrutinen roterar på den avlånga rullen.
+const PRINT_DIMS_MM = {
+  '62':    { w: 62, h: 100 },
+  '62x29': { w: 62, h: 29 },   // DK-11209 – bred etikett
+  '29x90': { w: 90, h: 29 },   // DK-11201 – avlång etikett (liggande design)
+  '29':    { w: 29, h: 100 },
+  '38':    { w: 38, h: 100 },
+  '50':    { w: 50, h: 100 },
+  '54':    { w: 54, h: 100 },
+};
+
 // ── Etikettutskrift (via webbläsaren till Brother QL-810W) ──
 function renderLabel(p) {
   const area = document.getElementById('print-label');
@@ -1081,6 +1093,12 @@ function renderLabel(p) {
     toast('Kunde inte skapa etikett (streckkodsbiblioteket laddades inte).', 'error');
     return false;
   }
+  // Anpassa sidstorlek efter vald etikettstorlek i inställningarna
+  const size = (db.settings && db.settings.labelSize) || '62x29';
+  const dim = PRINT_DIMS_MM[size] || PRINT_DIMS_MM['62x29'];
+  area.style.width = dim.w + 'mm';
+  const dimsEl = document.getElementById('print-dims');
+  if (dimsEl) dimsEl.textContent = '@page{size:' + dim.w + 'mm ' + dim.h + 'mm;margin:0}';
   area.querySelector('.pl-name').textContent = p.name || '';
   area.querySelector('.pl-art').textContent  = p.articleNo ? 'Art.nr: ' + p.articleNo : '';
   try {
