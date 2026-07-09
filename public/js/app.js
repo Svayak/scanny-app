@@ -205,6 +205,7 @@ async function loadAll() {
   try {
     db = await api('GET', '/api/db');
     if (db.products) db.products.forEach(p => { if (!p.id) p.id = p._id; });
+    if (db.orders)   db.orders.forEach(o   => { if (!o.id) o.id = o._id; });
     if (db.users)    db.users.forEach(u    => { if (!u.id) u.id = u._id; });
     if (db.vehicles) db.vehicles.forEach(v => { if (!v.id) v.id = v._id; });
     setStatus(true);
@@ -653,8 +654,8 @@ function renderOrders() {
     ordersList.innerHTML = pending.map(o =>
       '<div class="order-card">' +
       '<div><div class="oc-name">' + esc(o.name) + '</div>' +
-      '<div class="oc-detail">Beställ: ' + o.orderQty + ' st &nbsp;·&nbsp; Art.nr: ' + esc(o.articleNo || '—') + ' &nbsp;·&nbsp; Leverantör: ' + esc(o.supplier || '—') + ' &nbsp;·&nbsp; ' + o.created + '</div></div>' +
-      '<button class="btn btn-sm" onclick="markSent(' + o.id + ')">Markera skickad</button>' +
+      '<div class="oc-detail">Beställ: ' + o.orderQty + ' st &nbsp;·&nbsp; Art.nr: ' + esc(o.articleNo || '—') + ' &nbsp;·&nbsp; Leverantör: ' + esc(o.supplier || '—') + (o.createdAt ? ' &nbsp;·&nbsp; ' + new Date(o.createdAt).toLocaleDateString('sv-SE') : '') + '</div></div>' +
+      '<button class="btn btn-sm" onclick="markSent(\'' + o.id + '\')">Markera skickad</button>' +
       '</div>'
     ).join('');
   }
