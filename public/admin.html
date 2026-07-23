@@ -143,6 +143,7 @@
               <th>Produkt</th>
               <th>Antal</th>
               <th>Leverantör</th>
+              <th style="text-align:right">A-pris</th>
               <th>Status</th>
               <th></th>
             </tr>
@@ -328,6 +329,7 @@
         <h3>Lägg till användare</h3>
         <div class="form-grid">
           <div class="form-group"><label>Namn *</label><input id="u-name" placeholder="Anna Andersson"></div>
+          <div class="form-group"><label>PIN (4 siffror, valfritt)</label><input id="u-pin" type="text" inputmode="numeric" pattern="\d*" maxlength="4" placeholder="t.ex. 1234"></div>
         </div>
         <h3 style="margin-top:1rem;font-size:13px">Behörigheter</h3>
         <div style="display:flex;gap:1.5rem;margin-top:.5rem;flex-wrap:wrap">
@@ -429,6 +431,7 @@
       </div>
       <div class="form-group"><label>Artikelnummer</label><input id="edit-article" placeholder="12345"></div>
       <div class="form-group"><label>Leverantör</label><input id="edit-supplier" placeholder="Würth"></div>
+      <div class="form-group"><label>A-pris (utpris till kund, kr)</label><input id="edit-price" type="number" min="0" step="0.01" placeholder="0"></div>
     </div>
     <div class="modal-actions">
       <button class="btn" style="flex:1" onclick="closeEditModal()">Avbryt</button>
@@ -459,6 +462,7 @@
         <div class="form-group"><label>Artikelnummer</label><input id="a-article" placeholder="12345"></div>
         <div class="form-group"><label>Leverantör</label><input id="a-supplier" placeholder="Würth"></div>
       </div>
+      <div class="form-group"><label>A-pris (utpris till kund, kr)</label><input id="a-price" type="number" value="0" min="0" step="0.01" placeholder="0"></div>
       <div style="font-size:12px;color:var(--text3)">📋 Beställningsnivå: kö → schemalagd tid &nbsp;|&nbsp; ⚠ Kritisk nivå: direkt-mail</div>
       <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:14px;cursor:pointer">
         <input type="checkbox" id="a-print" checked style="width:18px;height:18px">🏷 Skriv ut etikett direkt när produkten sparas

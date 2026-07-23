@@ -223,6 +223,10 @@ async function loadAll() {
 function esc(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+// Formatera ett belopp i SEK, t.ex. 49,50 kr
+function kr(n) {
+  return (Number(n) || 0).toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' kr';
+}
 // Escapa värde för användning inuti en enkelciterad JS-sträng i ett HTML-attribut (onclick).
 function escJs(str) {
   return String(str)
@@ -343,6 +347,7 @@ function showEditModal(id) {
   document.getElementById('edit-order-qty').value = p.orderQty;
   document.getElementById('edit-article').value = p.articleNo || '';
   document.getElementById('edit-supplier').value = p.supplier || '';
+  document.getElementById('edit-price').value = p.price ?? 0;
   document.getElementById('edit-modal').style.display = 'flex';
   setTimeout(() => document.getElementById('edit-name').focus(), 100);
 }
@@ -361,7 +366,8 @@ async function saveEditProduct() {
     critical:  parseInt(document.getElementById('edit-critical').value) || 0,
     orderQty:  parseInt(document.getElementById('edit-order-qty').value) || 10,
     articleNo: document.getElementById('edit-article').value.trim(),
-    supplier:  document.getElementById('edit-supplier').value.trim()
+    supplier:  document.getElementById('edit-supplier').value.trim(),
+    price:     parseFloat(document.getElementById('edit-price').value) || 0
   };
   if (!body.name || !body.code) { toast('Namn och streckkod krävs', 'error'); return; }
   try {
@@ -584,7 +590,7 @@ function renderLager() {
 
   if (filtered.length === 0) {
     document.getElementById('lager-body').innerHTML =
-      '<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:2rem">Inga produkter hittades.</td></tr>';
+      '<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:2rem">Inga produkter hittades.</td></tr>';
     return;
   }
 
@@ -597,6 +603,7 @@ function renderLager() {
 	'<button class="btn btn-sm" onclick="adjustQty(\''+p.id+'\',1)">+</button>'+
     '</div></td>' +
     '<td style="color:var(--text2)">' + esc(p.supplier || '—') + '</td>' +
+    '<td style="text-align:right;white-space:nowrap">' + (p.price ? kr(p.price) : '—') + '</td>' +
     '<td>' + badge(p) + '</td>' +
     '<td style="white-space:nowrap">' +
 	'<button class="btn btn-sm" onclick="showEditModal(\''+p.id+'\')">Redigera</button>'+
@@ -885,9 +892,13 @@ function renderUsers() {
         <div>
           <div class="oc-name">${esc(u.name)}</div>
           <div class="oc-detail">Behörigheter: ${permLabel(u.permissions)}</div>
+          <div class="oc-detail">${u.hasPin ? '🔒 PIN aktiv' : '🔓 Ingen PIN'}</div>
         </div>
       </div>
-      <button class="btn btn-sm btn-danger" onclick="deleteUser('${u.id}')">Ta bort</button>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-sm" onclick="setUserPin('${u.id}')">🔑 PIN</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteUser('${u.id}')">Ta bort</button>
+      </div>
     </div>`).join('');
 }
 
@@ -899,13 +910,32 @@ async function addUser() {
     add:       document.getElementById('u-perm-add').checked,
     inventory: document.getElementById('u-perm-inv').checked
   };
+  const pinEl = document.getElementById('u-pin');
+  const pin = pinEl ? pinEl.value.trim() : '';
+  if (pin && !/^\d{4}$/.test(pin)) { toast('PIN måste vara 4 siffror', 'error'); return; }
   try {
-    await api('POST', '/api/users', { name, permissions });
+    await api('POST', '/api/users', { name, permissions, pin: pin || undefined });
     toast('Användare tillagd: ' + name);
     document.getElementById('u-name').value = '';
+    if (pinEl) pinEl.value = '';
     document.getElementById('u-perm-scan').checked = true;
     document.getElementById('u-perm-add').checked  = false;
     document.getElementById('u-perm-inv').checked  = false;
+    await loadAll();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// Sätt / ändra / ta bort en användares PIN
+async function setUserPin(id) {
+  const u = db.users?.find(x => x.id === id);
+  if (!u) return;
+  const input = prompt(`PIN för ${u.name}\n\nAnge 4 siffror. Lämna tomt och tryck OK för att ta bort PIN.`, '');
+  if (input === null) return; // avbrutet
+  const pin = input.trim();
+  if (pin !== '' && !/^\d{4}$/.test(pin)) { toast('PIN måste vara 4 siffror', 'error'); return; }
+  try {
+    await api('PATCH', '/api/users/' + id, { pin });
+    toast(pin ? 'PIN sparad för ' + u.name : 'PIN borttagen för ' + u.name);
     await loadAll();
   } catch (err) { toast(err.message, 'error'); }
 }
@@ -939,6 +969,27 @@ function renderVehicles() {
   const vehicles     = (db.vehicles || []).filter(v => !v.archived);
   const archivedList = (db.vehicles || []).filter(v =>  v.archived);
 
+  // Aktuellt A-pris för en historikpost (matcha på art.nr, annars namn)
+  const priceOf = (h) => {
+    const art = (h.articleNo || '').trim();
+    let p = null;
+    if (art && art !== '—') p = (db.products || []).find(x => (x.articleNo || '').trim() === art);
+    if (!p) p = (db.products || []).find(x => x.name === h.productName);
+    return p ? (p.price || 0) : 0;
+  };
+  // Summera historik per artikel (slå ihop dubbletter)
+  const materialSummary = (v) => {
+    const map = new Map();
+    (v.history || []).forEach(h => {
+      const art = (h.articleNo || '').trim();
+      const key = (art && art !== '—') ? 'art:' + art : 'name:' + h.productName;
+      const cur = map.get(key) || { name: h.productName, articleNo: h.articleNo, qty: 0, price: priceOf(h) };
+      cur.qty += Number(h.qty) || 0;
+      map.set(key, cur);
+    });
+    return [...map.values()];
+  };
+
   const vehicleCard = (v, isArchived) => `
     <div class="order-card" style="border-left-color:#ec4899;flex-direction:column;align-items:stretch;margin-bottom:10px">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
@@ -959,15 +1010,30 @@ function renderVehicles() {
           <button class="btn btn-sm btn-danger" onclick="deleteVehicle('${v.id}')">Ta bort</button>
         </div>
       </div>
-      ${(v.history||[]).length > 0 ? `
+      ${(v.history||[]).length > 0 ? (() => {
+        const items = materialSummary(v);
+        const total = items.reduce((s, it) => s + it.qty * it.price, 0);
+        return `
         <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
-          <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Senaste uttag</div>
-          ${(v.history||[]).slice(0,5).map(h=>`
-            <div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;border-bottom:1px solid var(--border)">
-              <span>${esc(h.productName)} &nbsp;·&nbsp; ${esc(h.userName)}</span>
-              <span style="color:var(--text3)">${esc(h.time)}</span>
+          <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Materialåtgång</div>
+          <div style="display:flex;font-size:11px;color:var(--text3);padding:2px 0">
+            <span style="flex:1">Artikel</span>
+            <span style="width:36px;text-align:right">Antal</span>
+            <span style="width:80px;text-align:right">A-pris</span>
+            <span style="width:90px;text-align:right">Radkostnad</span>
+          </div>
+          ${items.map(it => `
+            <div style="display:flex;font-size:12px;padding:3px 0;border-bottom:1px solid var(--border)">
+              <span style="flex:1">${esc(it.name)}${it.price ? '' : ' <span style="color:var(--warn)" title="Inget A-pris satt">⚠</span>'}</span>
+              <span style="width:36px;text-align:right">${it.qty}</span>
+              <span style="width:80px;text-align:right;color:var(--text3)">${it.price ? kr(it.price) : '—'}</span>
+              <span style="width:90px;text-align:right">${kr(it.qty * it.price)}</span>
             </div>`).join('')}
-        </div>` : ''}
+          <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;padding-top:6px">
+            <span>Total materialkostnad</span>
+            <span>${kr(total)}</span>
+          </div>
+        </div>`; })() : ''}
     </div>`;
 
   active.innerHTML = vehicles.length === 0
@@ -1133,6 +1199,7 @@ function showAddProductModal() {
   document.getElementById('a-min').value = '5';
   document.getElementById('a-critical').value = '2';
   document.getElementById('a-order').value = '10';
+  document.getElementById('a-price').value = '0';
   document.getElementById('add-product-modal').style.display = 'flex';
   setTimeout(() => document.getElementById('a-name').focus(), 100);
 }
@@ -1172,7 +1239,8 @@ async function addProduct() {
     critical:  parseInt(document.getElementById('a-critical').value) || 2,
     orderQty:  parseInt(document.getElementById('a-order').value) || 10,
     articleNo: document.getElementById('a-article').value.trim(),
-    supplier:  document.getElementById('a-supplier').value.trim()
+    supplier:  document.getElementById('a-supplier').value.trim(),
+    price:     parseFloat(document.getElementById('a-price').value) || 0
   };
   if (!body.name || !body.code) { toast('Fyll i namn och streckkod', 'error'); return; }
   const printEl = document.getElementById('a-print');

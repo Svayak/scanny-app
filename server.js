@@ -229,7 +229,8 @@ const CSV_COLS = {
   critical:  ['kritisk', 'kritisk nivå', 'critical'],
   orderQty:  ['best.antal', 'beställningsantal', 'orderqty', 'beställ', 'beställningsmängd'],
   articleNo: ['artikelnummer', 'art.nr', 'artikelnr', 'articleno', 'art nr', 'artnr'],
-  supplier:  ['leverantör', 'supplier', 'lev']
+  supplier:  ['leverantör', 'supplier', 'lev'],
+  price:     ['a-pris', 'apris', 'pris', 'price', 'styckpris', 'utpris']
 };
 
 // ══════════════════════════════════════════
@@ -332,10 +333,11 @@ app.get('/api/products', authMiddleware, async (req, res) => {
 
 app.post('/api/products', authMiddleware, async (req, res) => {
   try {
-    const { name, code, qty, min, critical, orderQty, articleNo, supplier } = req.body;
+    const { name, code, qty, min, critical, orderQty, articleNo, supplier, price } = req.body;
     if (!name || !code) return res.status(400).json({ error: 'Namn och streckkod krävs' });
     if (await Product.findOne({ tenantId: req.tenantId, code })) return res.status(409).json({ error: 'Streckkod finns redan' });
-    const product = await Product.create({ tenantId: req.tenantId, name, code, qty: qty||0, min: min||5, critical: critical||2, orderQty: orderQty||10, articleNo: articleNo||'', supplier: supplier||'' });
+    const cleanPrice = Math.max(0, parseFloat(price) || 0);
+    const product = await Product.create({ tenantId: req.tenantId, name, code, qty: qty||0, min: min||5, critical: critical||2, orderQty: orderQty||10, articleNo: articleNo||'', supplier: supplier||'', price: cleanPrice });
     await addLog(req.tenantId, `Ny produkt tillagd: ${name}`);
     res.json(product);
   } catch (err) { serverError(res, err); }
@@ -343,7 +345,7 @@ app.post('/api/products', authMiddleware, async (req, res) => {
 
 app.patch('/api/products/:id', authMiddleware, async (req, res) => {
   try {
-    const { name, code, qty, min, critical, orderQty, articleNo, supplier } = req.body;
+    const { name, code, qty, min, critical, orderQty, articleNo, supplier, price } = req.body;
     const allowed = {};
     if (name !== undefined) allowed.name = name;
     if (code !== undefined) allowed.code = code;
@@ -354,6 +356,7 @@ app.patch('/api/products/:id', authMiddleware, async (req, res) => {
     if (orderQty !== undefined) allowed.orderQty = nonNeg(orderQty);
     if (articleNo !== undefined) allowed.articleNo = articleNo;
     if (supplier !== undefined) allowed.supplier = supplier;
+    if (price !== undefined) allowed.price = Math.max(0, parseFloat(price) || 0);
     const product = await Product.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, allowed, { new: true });
     if (!product) return res.status(404).json({ error: 'Produkt hittades inte' });
     res.json(product);
@@ -530,14 +533,29 @@ app.post('/api/inventory-report', authMiddleware, checkTenantActive, requirePerm
 //  ANVÄNDARE
 // ══════════════════════════════════════════
 
+// Ta bort känsliga fält och lägg till hasPin (om användaren har en PIN satt)
+function sanitizeUser(u) {
+  const o = u.toObject ? u.toObject() : { ...u };
+  o.hasPin = !!o.pin;
+  delete o.pin;
+  delete o.password;
+  return o;
+}
+
 app.get('/api/users', authMiddleware, async (req, res) => {
-  res.json(await User.find({ tenantId: req.tenantId }).select('-password').sort({ name: 1 }));
+  const users = await User.find({ tenantId: req.tenantId }).sort({ name: 1 });
+  res.json(users.map(sanitizeUser));
 });
 
 app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
   try {
-    const { name, color, permissions } = req.body;
+    const { name, color, permissions, pin } = req.body;
     if (!name) return res.status(400).json({ error: 'Namn krävs' });
+    let pinHash = '';
+    if (pin) {
+      if (!/^\d{4}$/.test(String(pin))) return res.status(400).json({ error: 'PIN måste vara 4 siffror' });
+      pinHash = await bcrypt.hash(String(pin), 12);
+    }
     // Kvot per paketnivå
     const tenantForLimit = await Tenant.findById(req.tenantId);
     const maxUsers = planOf(tenantForLimit).maxUsers;
@@ -548,7 +566,7 @@ app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
     const hashed = await bcrypt.hash(Math.random().toString(36), 12);
     const user = await User.create({
       tenantId: req.tenantId, name,
-      email: fakeEmail, password: hashed,
+      email: fakeEmail, password: hashed, pin: pinHash,
       role: 'staff', color: color || randomColor(), initials: name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2),
       permissions: permissions ? {
         canScan: permissions.canScan ?? permissions.scan ?? true,
@@ -557,7 +575,7 @@ app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
       } : { canScan: true, canAdd: false, canInventory: false }
     });
     await addLog(req.tenantId, `Ny användare: ${name}`);
-    res.json({ id: user._id, name: user.name, color: user.color, permissions: user.permissions });
+    res.json({ id: user._id, name: user.name, color: user.color, permissions: user.permissions, hasPin: !!user.pin });
   } catch (err) { serverError(res, err); }
 });
 
@@ -570,9 +588,18 @@ app.patch('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
   try {
     const update = { ...req.body };
     if (update.password) { update.password = await bcrypt.hash(update.password, 12); }
-    const user = await User.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, update, { new: true }).select('-password');
+    if (update.pin !== undefined) {
+      if (update.pin === '' || update.pin === null) {
+        update.pin = '';   // ta bort PIN
+      } else if (/^\d{4}$/.test(String(update.pin))) {
+        update.pin = await bcrypt.hash(String(update.pin), 12);
+      } else {
+        return res.status(400).json({ error: 'PIN måste vara 4 siffror' });
+      }
+    }
+    const user = await User.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, update, { new: true });
     if (!user) return res.status(404).json({ error: 'Användare hittades inte' });
-    res.json(user);
+    res.json(sanitizeUser(user));
   } catch (err) { serverError(res, err); }
 });
 
@@ -702,9 +729,27 @@ app.get('/api/vehicles/:id/export', authMiddleware, async (req, res) => {
       const sinceDate = new Date(parseInt(since));
       history = history.filter(h => new Date(h.time) >= sinceDate);
     }
-    const rows = history.map(h =>
-      `<tr><td>${escHtml(h.time)}</td><td>${escHtml(h.productName)}</td><td>${escHtml(h.qty)}</td><td>${escHtml(h.articleNo||'—')}</td><td>${escHtml(h.supplier||'—')}</td><td>${escHtml(h.userName||'—')}</td></tr>`
-    ).join('');
+
+    // Aktuella priser för att räkna materialkostnad (matcha på art.nr, annars namn)
+    const products = await Product.find({ tenantId: req.tenantId }).limit(10000);
+    const priceOf = (h) => {
+      const art = (h.articleNo || '').trim();
+      let p = null;
+      if (art && art !== '—') p = products.find(x => (x.articleNo || '').trim() === art);
+      if (!p) p = products.find(x => x.name === h.productName);
+      return p ? (p.price || 0) : 0;
+    };
+    const fmt = n => (Number(n) || 0).toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    let total = 0;
+    const rows = history.map(h => {
+      const price = priceOf(h);
+      const qty = Number(h.qty) || 0;
+      const line = price * qty;
+      total += line;
+      return `<tr><td>${escHtml(h.time)}</td><td>${escHtml(h.productName)}</td><td style="text-align:right">${escHtml(h.qty)}</td><td>${escHtml(h.articleNo||'—')}</td><td>${escHtml(h.supplier||'—')}</td><td>${escHtml(h.userName||'—')}</td><td style="text-align:right">${fmt(price)}</td><td style="text-align:right">${fmt(line)}</td></tr>`;
+    }).join('');
+    const totalRow = `<tr><td colspan="7" style="text-align:right;font-weight:700;border-top:2px solid #ccc">Total materialkostnad</td><td style="text-align:right;font-weight:700;border-top:2px solid #ccc">${fmt(total)} kr</td></tr>`;
     const html = `<!DOCTYPE html><html lang="sv"><head><meta charset="UTF-8"><title>Export — ${escHtml(v.regNr)}</title>
     <style>body{font-family:sans-serif;padding:2rem;color:#111}h1{font-size:20px}h2{font-size:15px;color:#555;margin-top:0}table{width:100%;border-collapse:collapse;margin-top:1.5rem;font-size:13px}th{background:#f0f0f0;padding:8px;text-align:left;border-bottom:2px solid #ccc}td{padding:7px 8px;border-bottom:1px solid #e0e0e0}@media print{button{display:none}}</style>
     </head><body>
@@ -712,8 +757,9 @@ app.get('/api/vehicles/:id/export', authMiddleware, async (req, res) => {
     <h1>${escHtml(v.regNr)} — ${escHtml(v.make||'')} ${escHtml(v.model||'')}</h1>
     <h2>Kund: ${escHtml(v.customerName||'—')} &nbsp;|&nbsp; Kontakt: ${escHtml(v.customerContact||'—')}</h2>
     <p style="font-size:12px;color:#888">Exporterad: ${escHtml(new Date().toLocaleString('sv-SE'))}</p>
-    <table><thead><tr><th>Tid</th><th>Produkt</th><th>Antal</th><th>Art.nr</th><th>Leverantör</th><th>Användare</th></tr></thead>
-    <tbody>${rows||'<tr><td colspan="6" style="color:#888;text-align:center">Inga uttag registrerade</td></tr>'}</tbody></table>
+    <table><thead><tr><th>Tid</th><th>Produkt</th><th style="text-align:right">Antal</th><th>Art.nr</th><th>Leverantör</th><th>Användare</th><th style="text-align:right">A-pris</th><th style="text-align:right">Radkostnad</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="8" style="color:#888;text-align:center">Inga uttag registrerade</td></tr>'}${history.length?totalRow:''}</tbody></table>
+    <p style="font-size:11px;color:#aaa;margin-top:1rem">A-pris avser utpris till kund (aktuellt pris per artikel).</p>
     </body></html>`;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
@@ -722,9 +768,9 @@ app.get('/api/vehicles/:id/export', authMiddleware, async (req, res) => {
 
 app.get('/api/export/products.csv', authMiddleware, async (req, res) => {
   const products = await Product.find({ tenantId: req.tenantId }).sort({ name: 1 }).limit(10000);
-  const header = 'Namn,Streckkod,Antal,Artikelnummer,Leverantör\n';
+  const header = 'Namn,Streckkod,Antal,Artikelnummer,Leverantör,A-pris\n';
   const csvSafe = v => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g,'""') + '"'; };
-  const rows = products.map(p => [p.name, p.code, p.qty, p.articleNo||'', p.supplier||''].map(csvSafe).join(',')).join('\n');
+  const rows = products.map(p => [p.name, p.code, p.qty, p.articleNo||'', p.supplier||'', (p.price||0)].map(csvSafe).join(',')).join('\n');
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="lager.csv"');
   res.send('\uFEFF' + header + rows);
@@ -749,6 +795,7 @@ app.post('/api/products/import', authMiddleware, adminOnly, importLimiter, expre
 
     const cell = (row, field) => (colIdx[field] >= 0 ? (row[colIdx[field]] || '').trim() : '');
     const num = (v, def) => { const n = parseInt(String(v).replace(/[^\d]/g, ''), 10); return Number.isFinite(n) && n >= 0 ? n : def; };
+    const price = (v) => { const n = parseFloat(String(v).replace(/[^\d.,]/g, '').replace(',', '.')); return Number.isFinite(n) && n >= 0 ? n : 0; };
 
     let created = 0, updated = 0, skipped = 0;
     const errors = [];
@@ -768,6 +815,7 @@ app.post('/api/products/import', authMiddleware, adminOnly, importLimiter, expre
       if (colIdx.min >= 0)      fields.min      = num(cell(row, 'min'), 5);
       if (colIdx.critical >= 0) fields.critical = num(cell(row, 'critical'), 2);
       if (colIdx.orderQty >= 0) fields.orderQty = num(cell(row, 'orderQty'), 10);
+      if (colIdx.price >= 0)    fields.price    = price(cell(row, 'price'));
 
       try {
         const existing = await Product.findOne({ tenantId: req.tenantId, code });
@@ -789,7 +837,7 @@ app.get('/api/db', authMiddleware, checkTenantActive, async (req, res) => {
     const [products, orders, users, vehicles, logs, tenant, inventoryReports] = await Promise.all([
       Product.find({ tenantId: req.tenantId }).sort({ name: 1 }).limit(10000),
       Order.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(10000),
-      User.find({ tenantId: req.tenantId }).select('-password').sort({ name: 1 }),
+      User.find({ tenantId: req.tenantId }).sort({ name: 1 }),
       Vehicle.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(10000),
       Log.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(100),
       Tenant.findById(req.tenantId),
@@ -797,7 +845,7 @@ app.get('/api/db', authMiddleware, checkTenantActive, async (req, res) => {
     ]);
     const settings = { ...tenant?.settings?.toObject() };
     delete settings.smtpPass;
-    res.json({ products, orders, users, vehicles, logs, settings, inventoryReports,
+    res.json({ products, orders, users: users.map(sanitizeUser), vehicles, logs, settings, inventoryReports,
       plan: tenant?.plan || 'bas', planLimits: planLimitsPublic(tenant), usage: { users: users.length } });
   } catch (err) { serverError(res, err); }
 });
@@ -933,6 +981,13 @@ app.post('/api/kiosk/user-token', authMiddleware, kioskLimiter, async (req, res)
     if (tenant?.status !== 'active') return res.status(403).json({ error: 'Kontot är pausat' });
     const user = await User.findOne({ _id: req.body.userId, tenantId: req.tenantId });
     if (!user) return res.status(404).json({ error: 'Användare hittades inte' });
+    // Kräv PIN om användaren har en satt
+    if (user.pin) {
+      const pin = String(req.body.pin || '');
+      if (!pin) return res.status(401).json({ error: 'PIN krävs', needPin: true });
+      const okPin = await bcrypt.compare(pin, user.pin);
+      if (!okPin) return res.status(401).json({ error: 'Fel PIN', needPin: true });
+    }
     const token = jwt.sign(
       { tenantId: req.tenantId, userId: user._id, role: 'kiosk', name: user.name },
       JWT_SECRET,

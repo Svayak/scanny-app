@@ -33,6 +33,7 @@ const userSchema = new mongoose.Schema({
   password:  { type: String, required: true },
   role:      { type: String, enum: ['admin', 'staff'], default: 'staff' },
   color:     { type: String, default: '#0f6e56' },
+  pin:       { type: String, default: '' },   // bcrypt-hash av 4-siffrig PIN (kiosk-profilval)
   permissions: {
     canScan:      { type: Boolean, default: true },
     canAdd:       { type: Boolean, default: true },
@@ -52,6 +53,7 @@ const productSchema = new mongoose.Schema({
   orderQty:  { type: Number, default: 10 },
   articleNo: { type: String, default: '' },
   supplier:  { type: String, default: '' },
+  price:     { type: Number, default: 0 },   // A-pris (utpris till kund), SEK
   createdAt: { type: Date, default: Date.now }
 });
 productSchema.index({ tenantId: 1, code: 1 }, { unique: true });

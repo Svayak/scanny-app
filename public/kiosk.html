@@ -170,6 +170,9 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 /* ════════════════════
    MODAL (reg-nr + okänd)
    ════════════════════ */
+.pin-key{font-size:24px;font-weight:700;padding:18px 0}
+.pin-dot{width:16px;height:16px;border-radius:50%;border:2px solid var(--text3);display:inline-block}
+.pin-dot.filled{background:var(--accent);border-color:var(--accent)}
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;display:none;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(6px)}
 .modal-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:32px;width:100%;max-width:520px;box-shadow:0 24px 80px rgba(0,0,0,.6);animation:modal-in .18s ease}
 @keyframes modal-in{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
@@ -328,6 +331,30 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
       <input id="vehicle-search" placeholder="ABC123" oninput="filterVehicles()" autocomplete="off" style="font-size:20px;letter-spacing:2px;text-transform:uppercase">
     </div>
     <button class="no-vehicle-btn" onclick="selectVehicle(null)">Fortsätt utan fordon</button>
+  </div>
+</div>
+
+<!-- ── MODAL: PIN ── -->
+<div class="modal-overlay" id="pin-modal">
+  <div class="modal-box" style="max-width:360px;text-align:center">
+    <div class="modal-title">🔒 Ange PIN</div>
+    <div class="modal-subtitle" id="pin-user-name"></div>
+    <div id="pin-dots" style="display:flex;justify-content:center;gap:16px;margin:20px 0"></div>
+    <div id="pin-error" style="color:#ef4444;font-size:14px;min-height:20px;margin-bottom:8px"></div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+      <button class="btn pin-key" onclick="pinPress('1')">1</button>
+      <button class="btn pin-key" onclick="pinPress('2')">2</button>
+      <button class="btn pin-key" onclick="pinPress('3')">3</button>
+      <button class="btn pin-key" onclick="pinPress('4')">4</button>
+      <button class="btn pin-key" onclick="pinPress('5')">5</button>
+      <button class="btn pin-key" onclick="pinPress('6')">6</button>
+      <button class="btn pin-key" onclick="pinPress('7')">7</button>
+      <button class="btn pin-key" onclick="pinPress('8')">8</button>
+      <button class="btn pin-key" onclick="pinPress('9')">9</button>
+      <button class="btn" onclick="closePinModal()" style="font-size:15px">Avbryt</button>
+      <button class="btn pin-key" onclick="pinPress('0')">0</button>
+      <button class="btn pin-key" onclick="pinBackspace()">⌫</button>
+    </div>
   </div>
 </div>
 
@@ -515,7 +542,52 @@ function renderUserGrid() {
     </div>`).join('');
 }
 
-async function selectUser(userId) {
+function selectUser(userId) {
+  const u = db.users.find(x => x.id === userId);
+  if (!u) return;
+  if (u.hasPin) { openPinModal(userId); return; }
+  proceedSelectUser(userId, null);
+}
+
+// ── PIN-inmatning ──
+let pinState = { userId: null, digits: '' };
+function openPinModal(userId) {
+  const u = db.users.find(x => x.id === userId);
+  pinState = { userId, digits: '' };
+  document.getElementById('pin-user-name').textContent = u ? u.name : '';
+  document.getElementById('pin-error').textContent = '';
+  renderPinDots();
+  document.getElementById('pin-modal').style.display = 'flex';
+}
+function closePinModal() {
+  document.getElementById('pin-modal').style.display = 'none';
+  pinState = { userId: null, digits: '' };
+}
+function renderPinDots() {
+  const dots = [0,1,2,3].map(i => `<span class="pin-dot${i < pinState.digits.length ? ' filled' : ''}"></span>`).join('');
+  document.getElementById('pin-dots').innerHTML = dots;
+}
+function showPinError(msg) {
+  document.getElementById('pin-error').textContent = msg;
+  pinState.digits = '';
+  renderPinDots();
+}
+function pinPress(d) {
+  if (pinState.digits.length >= 4) return;
+  pinState.digits += d;
+  document.getElementById('pin-error').textContent = '';
+  renderPinDots();
+  if (pinState.digits.length === 4) {
+    const uid = pinState.userId, pin = pinState.digits;
+    setTimeout(() => proceedSelectUser(uid, pin), 120);
+  }
+}
+function pinBackspace() {
+  pinState.digits = pinState.digits.slice(0, -1);
+  renderPinDots();
+}
+
+async function proceedSelectUser(userId, pin) {
   const u = db.users.find(x => x.id === userId);
   if (!u) return;
   // Byt device-token mot en användarspecifik token — agerande användare bäddas in server-side
@@ -523,15 +595,19 @@ async function selectUser(userId) {
     const res = await fetch('/api/kiosk/user-token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + kioskToken },
-      body: JSON.stringify({ userId })
+      body: JSON.stringify({ userId, pin })
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Kunde inte logga in användaren');
+    if (!res.ok) {
+      if (data.needPin) { showPinError(data.error || 'Fel PIN'); return; }
+      throw new Error(data.error || 'Kunde inte logga in användaren');
+    }
     userToken = data.token;
   } catch (err) {
     alert('Kunde inte välja användare: ' + err.message);
     return;
   }
+  closePinModal();
   currentUser    = u;
   currentVehicle = null;
 
