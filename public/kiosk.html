@@ -313,7 +313,9 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 </div>
 
 <!-- Gömt input -->
-<input type="text" id="barcode-input" class="barcode-input" autocomplete="off">
+<input type="text" name="fakeuser" autocomplete="username" tabindex="-1" aria-hidden="true" style="position:absolute;height:0;width:0;opacity:0;pointer-events:none;left:-9999px">
+<input type="password" name="fakepass" autocomplete="new-password" tabindex="-1" aria-hidden="true" style="position:absolute;height:0;width:0;opacity:0;pointer-events:none;left:-9999px">
+<input type="text" id="barcode-input" class="barcode-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-form-type="other">
 
 <!-- ── MODAL: Välj fordon ── -->
 <div class="modal-overlay" id="vehicle-modal">

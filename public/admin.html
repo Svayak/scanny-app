@@ -85,7 +85,10 @@
           </svg>
         </div>
         <p class="scan-label">Rikta streckkodspistolen och skanna</p>
-        <input type="text" id="barcode-input" class="barcode-input" placeholder="Streckkod..." autocomplete="off" autofocus />
+        <!-- Decoy-fält: fångar Chromes lösenords-autofyll så den inte hamnar i streckkodsfältet -->
+        <input type="text" name="fakeuser" autocomplete="username" tabindex="-1" aria-hidden="true" style="position:absolute;height:0;width:0;opacity:0;pointer-events:none;top:-100px">
+        <input type="password" name="fakepass" autocomplete="new-password" tabindex="-1" aria-hidden="true" style="position:absolute;height:0;width:0;opacity:0;pointer-events:none;top:-100px">
+        <input type="text" id="barcode-input" class="barcode-input" placeholder="Streckkod..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-form-type="other" autofocus />
         <p class="scan-hint">Tryck Enter efter manuell inmatning</p>
         <button class="btn cam-btn" id="camera-toggle-btn" onclick="toggleCamera()">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
