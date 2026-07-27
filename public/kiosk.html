@@ -395,6 +395,7 @@ let currentVehicle = null;  // { id, regNr, ... } eller null
 let currentMode    = 'out';
 let inventory      = {};
 let scanCooldown   = false;
+let lastScan       = { code: null, t: 0 };   // dedupe mot dubbel-avfyrning (gun/manuell)
 
 const AUTO_RESET_MS   = 10 * 60 * 1000;
 const LOGOUT_IDLE_MS  = 10 * 60 * 1000;
@@ -513,6 +514,18 @@ async function loadDb() {
   try { db = await api('GET','/api/db'); if (db.vehicles) db.vehicles.forEach(v => { if (!v.id) v.id = v._id; }); if (db.products) db.products.forEach(p => { if (!p.id) p.id = p._id; }); if (db.users) db.users.forEach(u => { if (!u.id) u.id = u._id; }); setStatus(true); renderUserGrid(); }
   catch(_) { setStatus(false); }
 }
+
+// Uppdatera en produkt lokalt från serverns svar — undviker full omladdning vid varje skanning.
+function applyProductUpdate(p) {
+  if (!p || !db.products) return;
+  const key = p.id || p._id;
+  let idx = db.products.findIndex(x => x.id === key || x._id === key);
+  if (idx < 0 && p.code) idx = db.products.findIndex(x => x.code === p.code);
+  if (idx >= 0) { const eid = db.products[idx].id; db.products[idx] = { ...db.products[idx], ...p, id: eid }; }
+}
+// Full synk körs en gång när skanningen lugnat sig.
+let _syncTimer = null;
+function scheduleSync(delay = 900) { clearTimeout(_syncTimer); _syncTimer = setTimeout(() => { loadDb(); }, delay); }
 function setStatus(ok) {
   const dot = document.getElementById('k-status-dot'), txt = document.getElementById('k-status-text');
   if (dot) dot.className = 'status-dot'+(ok?'':' error');
@@ -854,9 +867,11 @@ document.getElementById('barcode-input').addEventListener('keydown', e => {
 //  SKANNING
 // ════════════════════════════════
 async function scanProduct(code) {
-  if (scanCooldown) return;
-  scanCooldown = true;
-  setTimeout(() => { scanCooldown = false; }, 1200);
+  const c = String(code).trim();
+  // Blockera bara EXAKT samma kod inom 250 ms (pistolens dubbel-avfyrning). Olika koder släpps direkt.
+  const now = Date.now();
+  if (c === lastScan.code && (now - lastScan.t) < 250) return;
+  lastScan = { code: c, t: now };
   resetLogoutTimer();
   if (currentMode === 'add') startAutoReset();
 
@@ -877,18 +892,16 @@ async function scanProduct(code) {
     const res = await api('POST', endpoint, { code, actorId: currentUser?.id });
     const p   = res.product;
 
-    // Logga uttag på fordon
+    // Logga uttag på fordon (icke-blockerande — fördröjer inte återkopplingen)
     if (currentMode === 'out' && currentVehicle) {
       const prod = db.products.find(x => x.name === p.name);
-      try {
-        await api('POST', '/api/vehicles/' + currentVehicle.id + '/log', {
-          productName: p.name,
-          qty: 1,
-          userName: currentUser?.name || '—',
-          articleNo: prod?.articleNo || '—',
-          supplier:  prod?.supplier  || '—'
-        });
-      } catch(_) {}
+      api('POST', '/api/vehicles/' + currentVehicle.id + '/log', {
+        productName: p.name,
+        qty: 1,
+        userName: currentUser?.name || '—',
+        articleNo: prod?.articleNo || '—',
+        supplier:  prod?.supplier  || '—'
+      }).catch(() => {});
     }
 
     if (currentMode === 'add') {
@@ -900,7 +913,9 @@ async function scanProduct(code) {
     } else {
       soundSuccess(); showFeedback('ok','✓', p.name, 'Uttag registrerat', p.qty);
     }
-    await loadDb();
+    // Uppdatera lokalt direkt; full synk sker när skanningen lugnat sig
+    applyProductUpdate(p);
+    scheduleSync();
   } catch (err) {
     if (err.message?.startsWith('Okänd streckkod')) { soundError(); showAddUnknown(code); }
     else { soundError(); showFeedback('err','✗','Fel', err.message, null); }

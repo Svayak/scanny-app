@@ -5,6 +5,8 @@
 // ── Globalt tillstånd ──
 let db = { products: [], orders: [], orderHistory: [], inventoryReports: [], logs: [], settings: {}, users: [], vehicles: [] };
 let codeReader = null, cameraActive = false, currentCameraIndex = 0, availableCameras = [], scanCooldown = false;
+let lastScan = { code: null, t: 0 };   // dedupe mot dubbel-avfyrning av samma kod
+let lastCamScan = { code: null, t: 0 };   // kameran avkodar löpande — egen längre spärr per kod
 let currentMode = 'out';
 let inventory = {};
 let autoResetTimer = null;
@@ -215,6 +217,33 @@ async function loadAll() {
   }
 }
 
+// ── Snabb, lokal uppdatering (undviker full omladdning vid varje skanning) ──
+// Uppdaterar en produkt i den lokala db:n från serverns svar.
+function applyProductUpdate(p) {
+  if (!p || !db.products) return;
+  const key = p.id || p._id;
+  let idx = db.products.findIndex(x => x.id === key || x._id === key);
+  if (idx < 0 && p.code) idx = db.products.findIndex(x => x.code === p.code);
+  if (idx >= 0) {
+    const existingId = db.products[idx].id;
+    db.products[idx] = { ...db.products[idx], ...p, id: existingId };
+  }
+}
+
+// Rita bara om de vyer som påverkas av lagerförändringar (snabbt, ingen nätverkstrafik).
+function refreshInventoryViews() {
+  renderMetrics();
+  renderQuickGrid();
+  renderLager();
+}
+
+// En full omladdning (beställningar, larm, historik) körs en gång när skanningen lugnat sig.
+let _syncTimer = null;
+function scheduleSync(delay = 900) {
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(() => { loadAll(); }, delay);
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  UI-hjälpare
 // ═══════════════════════════════════════════════════════════════
@@ -389,9 +418,12 @@ editModal.addEventListener('keydown', e => {
 //  Skanning
 // ═══════════════════════════════════════════════════════════════
 async function scanProduct(code) {
-  if (scanCooldown) return;
-  scanCooldown = true;
-  setTimeout(() => { scanCooldown = false; }, 1200);
+  const c = String(code).trim();
+  // Blockera bara EXAKT samma kod som skannades för under 250 ms sedan (pistolens dubbel-avfyrning).
+  // Olika koder – och medvetna upprepningar långsammare än så – släpps igenom direkt.
+  const now = Date.now();
+  if (c === lastScan.code && (now - lastScan.t) < 250) return;
+  lastScan = { code: c, t: now };
 
   if (currentMode === 'add') startAutoReset();
 
@@ -443,7 +475,10 @@ async function scanProduct(code) {
 
     setTimeout(() => { zone.className = 'scan-zone'; }, 700);
     document.getElementById('barcode-input').value = '';
-    await loadAll();
+    // Uppdatera lokalt direkt (snabbt) och synka fullt först när skanningen lugnat sig
+    applyProductUpdate(p);
+    refreshInventoryViews();
+    scheduleSync();
   } catch (err) {
     if (err.message && err.message.startsWith('Okänd streckkod')) {
       zone.className = 'scan-zone';
@@ -492,10 +527,15 @@ async function startDecoding() {
   document.getElementById('camera-status').textContent = 'Riktar kameran mot streckkoden...';
   try {
     await codeReader.decodeFromVideoDevice(deviceId, 'camera-video', result => {
-      if (result) {
-        document.getElementById('camera-status').textContent = 'Skannad: ' + result.getText();
-        scanProduct(result.getText());
-      }
+      if (!result) return;
+      const text = result.getText();
+      // Kameran anropar den här ~flera ggr/sek medan en kod är i bild —
+      // registrera samma kod högst var 1,5:e sekund.
+      const now = Date.now();
+      if (text === lastCamScan.code && (now - lastCamScan.t) < 1500) return;
+      lastCamScan = { code: text, t: now };
+      document.getElementById('camera-status').textContent = 'Skannad: ' + text;
+      scanProduct(text);
     });
   } catch (err) {
     document.getElementById('camera-status').textContent = 'Kamerafel: ' + err.message;
@@ -1120,13 +1160,14 @@ async function deleteVehicle(id) {
 async function adjustQty(id, delta) {
   const p = db.products.find(x => x.id === id);
   if (!p) return;
-  if (delta < 0) {
-    try { await api('POST', '/api/scan', { code: p.code }); await loadAll(); }
-    catch (err) { toast(err.message, 'error'); }
-  } else {
-    try { await api('PATCH', '/api/products/' + id, { qty: p.qty + delta }); await loadAll(); }
-    catch (err) { toast(err.message, 'error'); }
-  }
+  // Använd de atomära endpointsen (/api/scan = −1, /api/add = +1) så snabba klick
+  // inte skriver över varandra. Uppdatera lokalt direkt, synka fullt när det lugnat sig.
+  try {
+    const res = await api('POST', delta < 0 ? '/api/scan' : '/api/add', { code: p.code });
+    if (res && res.product) applyProductUpdate(res.product);
+    refreshInventoryViews();
+    scheduleSync();
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 async function deleteProduct(id) {
