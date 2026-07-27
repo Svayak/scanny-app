@@ -357,7 +357,7 @@ function closeEditModal() {
 }
 
 async function saveEditProduct() {
-  const id = parseInt(document.getElementById('edit-id').value);
+  const id = document.getElementById('edit-id').value;
   const body = {
     name:      document.getElementById('edit-name').value.trim(),
     code:      document.getElementById('edit-code').value.trim(),
