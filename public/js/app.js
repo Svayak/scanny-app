@@ -7,6 +7,7 @@ let db = { products: [], orders: [], orderHistory: [], inventoryReports: [], log
 let codeReader = null, cameraActive = false, currentCameraIndex = 0, availableCameras = [], scanCooldown = false;
 let lastScan = { code: null, t: 0 };   // dedupe mot dubbel-avfyrning av samma kod
 let lastCamScan = { code: null, t: 0 };   // kameran avkodar löpande — egen längre spärr per kod
+let _inflight = 0;   // antal pågående lager-anrop (för att synka först när allt landat)
 let currentMode = 'out';
 let inventory = {};
 let autoResetTimer = null;
@@ -228,13 +229,6 @@ function applyProductUpdate(p) {
     const existingId = db.products[idx].id;
     db.products[idx] = { ...db.products[idx], ...p, id: existingId };
   }
-}
-
-// Rita bara om de vyer som påverkas av lagerförändringar (snabbt, ingen nätverkstrafik).
-function refreshInventoryViews() {
-  renderMetrics();
-  renderQuickGrid();
-  renderLager();
 }
 
 // En full omladdning (beställningar, larm, historik) körs en gång när skanningen lugnat sig.
@@ -475,9 +469,10 @@ async function scanProduct(code) {
 
     setTimeout(() => { zone.className = 'scan-zone'; }, 700);
     document.getElementById('barcode-input').value = '';
-    // Uppdatera lokalt direkt (snabbt) och synka fullt först när skanningen lugnat sig
+    // Uppdatera lokalt direkt (snabbt) och synka fullt först när skanningen lugnat sig.
+    // Rita bara om metrics-raden här — inte hela tabellen/snabbrutorna (som annars byggs om vid varje skanning).
     applyProductUpdate(p);
-    refreshInventoryViews();
+    renderMetrics();
     scheduleSync();
   } catch (err) {
     if (err.message && err.message.startsWith('Okänd streckkod')) {
@@ -639,7 +634,7 @@ function renderLager() {
     '<td style="font-weight:500">' + esc(p.name) + '</td>' +
     '<td><div class="qty-cell">' +
 	'<button class="btn btn-sm" onclick="adjustQty(\''+p.id+'\',-1)">−</button>'+
-	'<span class="qty-display" onclick="editQtyInline(\''+p.id+'\',this)">'+p.qty+'</span>'+
+	'<span class="qty-display" id="qd-'+p.id+'" onclick="editQtyInline(\''+p.id+'\',this)">'+p.qty+'</span>'+
 	'<button class="btn btn-sm" onclick="adjustQty(\''+p.id+'\',1)">+</button>'+
     '</div></td>' +
     '<td style="color:var(--text2)">' + esc(p.supplier || '—') + '</td>' +
@@ -1157,17 +1152,32 @@ async function deleteVehicle(id) {
 // ═══════════════════════════════════════════════════════════════
 //  Produkthantering
 // ═══════════════════════════════════════════════════════════════
-async function adjustQty(id, delta) {
+// Reconcile (badges/metrics/full tabell) körs EN gång, först när alla anrop landat.
+function scheduleReconcile() {
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(() => {
+    if (_inflight > 0) { scheduleReconcile(); return; }
+    loadAll();
+  }, 250);
+}
+
+function adjustQty(id, delta) {
   const p = db.products.find(x => x.id === id);
   if (!p) return;
-  // Använd de atomära endpointsen (/api/scan = −1, /api/add = +1) så snabba klick
-  // inte skriver över varandra. Uppdatera lokalt direkt, synka fullt när det lugnat sig.
-  try {
-    const res = await api('POST', delta < 0 ? '/api/scan' : '/api/add', { code: p.code });
-    if (res && res.product) applyProductUpdate(res.product);
-    refreshInventoryViews();
-    scheduleSync();
-  } catch (err) { toast(err.message, 'error'); }
+  if (delta < 0 && p.qty <= 0) return;   // inget att ta bort
+  // Optimistisk uppdatering: ändra BARA siffran, rör inte knappen — så inga snabba klick tappas.
+  p.qty += delta;
+  const span = document.getElementById('qd-' + id);
+  if (span) span.textContent = p.qty;
+  // Skicka atomärt i bakgrunden (/api/scan = −1, /api/add = +1). Ordningen spelar ingen roll.
+  _inflight++;
+  api('POST', delta < 0 ? '/api/scan' : '/api/add', { code: p.code })
+    .catch(err => {                       // rulla tillbaka vid fel (t.ex. slut på lager)
+      p.qty -= delta;
+      if (span) span.textContent = p.qty;
+      toast(err.message, 'error');
+    })
+    .finally(() => { _inflight--; scheduleReconcile(); });
 }
 
 async function deleteProduct(id) {
