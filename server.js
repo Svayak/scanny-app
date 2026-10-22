@@ -14,6 +14,7 @@ const mail = require('./mail');
 const allowTestAlert = mail.createRateLimiter({ windowMs: 15 * 60 * 1000, max: 5 });
 const ALLOWED_ORIGINS = ['https://scanny.se', 'https://www.scanny.se', 'http://localhost:3001'];
 const { authMiddleware, adminOnly, JWT_SECRET } = require('./auth');
+const { sendManifest } = require('./pwa');
 // Etikettmodulen kräver bwip-js + sharp (valfria beroenden). Ladda skyddat så att
 // servern startar även om de saknas i miljön (t.ex. molndrift utan skrivare).
 let generateLabelPng, printLabel;
@@ -71,6 +72,7 @@ app.use(helmet({
       objectSrc: ["'none'"],
       baseUri: ["'self'"],
       frameAncestors: ["'self'"],
+      workerSrc: ["'self'"],
     },
   },
   crossOriginEmbedderPolicy: false,
@@ -78,7 +80,11 @@ app.use(helmet({
 }));
 app.use(express.json({ limit: '10kb' }));
 app.use(mongoSanitize());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders(res, filePath) {
+    if (path.basename(filePath) === 'sw.js') res.setHeader('Cache-Control', 'no-cache');
+  }
+}));
 
 // ── Rate limiting ──
 const loginLimiter = rateLimit({
@@ -964,6 +970,7 @@ app.get('/superadmin', (req, res) => res.sendFile(path.join(__dirname, 'public',
 app.get('/app',        (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.get('/kiosk/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'kiosk.html')));
 app.get('/kiosk',      (req, res) => res.sendFile(path.join(__dirname, 'public', 'kiosk.html')));
+app.get('/manifest.webmanifest', (req, res) => sendManifest(req.query.start, res));
 
 // ── Kiosk token — hämta JWT via slug (ingen inloggning krävs) ──
 app.post('/api/kiosk/token', kioskLimiter, async (req, res) => {
@@ -1008,7 +1015,7 @@ app.post('/api/kiosk/user-token', authMiddleware, kioskLimiter, async (req, res)
 
 // ── Tenant slug routing ──
 app.get('/:slug', async (req, res, next) => {
-  const reserved = ['login','superadmin','app','kiosk','api','favicon.svg'];
+  const reserved = ['login','superadmin','app','kiosk','api','favicon.svg','manifest.webmanifest','sw.js','icons'];
   if (reserved.includes(req.params.slug)) return next();
   try {
     const tenant = await Tenant.findOne({ slug: req.params.slug });

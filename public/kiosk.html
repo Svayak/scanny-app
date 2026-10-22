@@ -3,8 +3,27 @@
 <head>
 <meta charset="UTF-8">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0c0f0a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Scanny">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
 <title>Scanny Kiosk</title>
+<script>
+(function () {
+  var link = document.createElement('link');
+  link.rel = 'manifest';
+  link.href = '/manifest.webmanifest?start=' + encodeURIComponent(location.pathname + location.search);
+  document.head.appendChild(link);
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('/sw.js').catch(function () {});
+    });
+  }
+})();
+</script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -16,7 +35,8 @@
   --danger:#f87171;--danger-light:rgba(248,113,113,.12);
   --radius:16px;--radius-lg:24px;
 }
-html,body{height:100%;overflow:hidden;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:var(--text);user-select:none;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:var(--text);user-select:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+input,select,textarea{font-size:16px}
 
 body::before{content:'';position:fixed;inset:0;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");pointer-events:none;z-index:0;opacity:.35}
 
@@ -62,7 +82,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
   background:var(--surface);border:2px solid var(--border);border-radius:var(--radius-lg);
   padding:20px 16px;display:flex;flex-direction:row;align-items:center;gap:16px;
   cursor:pointer;transition:all .15s;
-  min-height:80px;
+  min-height:88px;
 }
 .user-card:hover{border-color:var(--accent);box-shadow:0 4px 20px rgba(74,222,128,.08);transform:translateY(-2px)}
 .user-card:active{transform:scale(.97)}
@@ -80,7 +100,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 #screen-scan{background:var(--bg)}
 .scan-layout{
   display:grid;
-  grid-template-rows:auto 1fr auto;
+  grid-template-rows:auto minmax(0,1fr) auto auto;
   height:100vh;
   padding:20px 24px 24px;
   gap:16px;
@@ -96,7 +116,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .user-bar-avatar{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;flex-shrink:0}
 .user-bar-name{font-size:14px;font-weight:600}
 .user-bar-role{font-size:12px;color:var(--text3);margin-top:1px}
-.logout-btn{padding:6px 14px;font-size:13px;font-weight:600;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface2);color:var(--text2);cursor:pointer;transition:all .12s}
+.logout-btn{min-height:48px;padding:12px 18px;font-size:16px;font-weight:700;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface2);color:var(--text2);cursor:pointer;transition:all .12s}
 .logout-btn:hover{border-color:rgba(248,113,113,.4);color:var(--danger)}
 
 /* Feedback-kort */
@@ -105,9 +125,12 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
   padding:28px 32px;text-align:center;transition:border-color .2s,background .2s;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
 }
-.feedback-card.ok{background:rgba(74,222,128,.08);border-color:rgba(74,222,128,.4)}
+.feedback-card.ok{background:rgba(74,222,128,.08);border-color:rgba(74,222,128,.4);animation:scan-flash .18s ease}
 .feedback-card.warn{background:rgba(251,191,36,.08);border-color:rgba(251,191,36,.4)}
-.feedback-card.err{background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.4)}
+.feedback-card.err{background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.4);animation:scan-shake .28s ease}
+.feedback-card.pending{background:var(--surface2);border-color:var(--border2)}
+@keyframes scan-flash{from{transform:scale(.985)}to{transform:none}}
+@keyframes scan-shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
 .feedback-icon{font-size:52px;line-height:1}
 .feedback-name{font-size:28px;font-weight:700}
 .feedback-qty{font-size:60px;font-weight:800;line-height:1}
@@ -134,9 +157,9 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .mode-section{}
 .mode-bar{display:flex;gap:12px}
 .mode-btn{
-  flex:1;padding:16px 12px;font-size:17px;font-weight:700;border-radius:var(--radius);
+  flex:1;padding:16px 12px;min-height:76px;font-size:17px;font-weight:700;border-radius:var(--radius);
   border:3px solid var(--border);background:var(--surface);color:var(--text2);
-  cursor:pointer;transition:all .15s;display:flex;flex-direction:column;align-items:center;gap:6px;
+  cursor:pointer;transition:all .15s;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
 }
 .mode-btn .mode-icon{font-size:28px}
 .mode-btn:active{transform:scale(.97)}
@@ -158,19 +181,33 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .timer-label.urgent{color:var(--danger)}
 
 /* ── Knappar ── */
-.btn{padding:10px 20px;font-size:14px;font-weight:600;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;transition:all .12s}
+.btn{min-height:48px;padding:12px 20px;font-size:16px;font-weight:600;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;transition:all .12s}
 .btn:active{transform:scale(.97)}
 .btn-primary{background:var(--accent);color:#0c0f0a;border-color:var(--accent);font-weight:700}
 .btn-primary:hover{background:#22c55e}
 .btn-danger{border-color:rgba(248,113,113,.4);color:var(--danger);background:rgba(248,113,113,.08)}
 
-/* ── Gömt input ── */
-.barcode-input{position:fixed;left:-9999px;opacity:0;width:1px;height:1px}
+/* ── Skanningsfält: synligt men utan skärmtangentbord (inputmode=none) ── */
+.scan-entry{display:flex;gap:10px;align-items:stretch}
+.barcode-input{
+  position:relative;flex:1;width:100%;min-height:56px;opacity:1;
+  font-size:20px;text-align:center;letter-spacing:1px;padding:12px 14px;
+  border:2px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);
+  caret-color:transparent;outline:none;user-select:text;-webkit-user-select:text;
+}
+.barcode-input:focus{border-color:var(--accent)}
+.barcode-input.manual-keyboard{caret-color:auto;border-color:var(--accent)}
+.barcode-input::placeholder{color:var(--text3);letter-spacing:0}
+.keyboard-toggle{
+  min-width:132px;min-height:56px;padding:12px 14px;font-size:16px;font-weight:700;
+  border-radius:var(--radius);border:2px solid var(--border);background:var(--surface2);color:var(--text2);cursor:pointer;
+}
+.keyboard-toggle.active{border-color:var(--accent);color:var(--accent)}
 
 /* ════════════════════
    MODAL (reg-nr + okänd)
    ════════════════════ */
-.pin-key{font-size:24px;font-weight:700;padding:18px 0}
+.pin-key{font-size:24px;font-weight:700;padding:18px 0;min-height:56px}
 .pin-dot{width:16px;height:16px;border-radius:50%;border:2px solid var(--text3);display:inline-block}
 .pin-dot.filled{background:var(--accent);border-color:var(--accent)}
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;display:none;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(6px)}
@@ -197,7 +234,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .vehicle-reg{font-size:18px;font-weight:700;letter-spacing:1px;color:var(--text)}
 .vehicle-info{font-size:12px;color:var(--text2);margin-top:2px}
 .vehicle-customer{font-size:12px;color:var(--text3)}
-.no-vehicle-btn{width:100%;padding:12px;border:1.5px dashed var(--border);border-radius:var(--radius);background:none;font-size:14px;color:var(--text3);cursor:pointer;transition:all .12s;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+.no-vehicle-btn{width:100%;min-height:52px;padding:14px;border:1.5px dashed var(--border);border-radius:var(--radius);background:none;font-size:16px;color:var(--text3);cursor:pointer;transition:all .12s;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
 .no-vehicle-btn:hover{border-color:var(--text3);color:var(--text2)}
 </style>
 </head>
@@ -216,13 +253,13 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
       <p style="font-size:14px;color:var(--text3);margin-bottom:28px">Logga in för att komma åt kiosken</p>
       <div style="display:flex;flex-direction:column;gap:6px;text-align:left;margin-bottom:16px">
         <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3)">E-post</label>
-        <input type="email" id="kiosk-email" placeholder="admin@verkstad.se" autocomplete="email" style="padding:12px 14px;background:var(--surface2);border:1px solid var(--border2);border-radius:12px;color:var(--text);font-size:15px;outline:none;font-family:inherit">
+        <input type="email" id="kiosk-email" placeholder="admin@verkstad.se" autocomplete="email" style="padding:12px 14px;background:var(--surface2);border:1px solid var(--border2);border-radius:12px;color:var(--text);font-size:16px;outline:none;font-family:inherit">
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;text-align:left;margin-bottom:16px">
         <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3)">Lösenord</label>
-        <input type="password" id="kiosk-password" placeholder="••••••••" autocomplete="current-password" style="padding:12px 14px;background:var(--surface2);border:1px solid var(--border2);border-radius:12px;color:var(--text);font-size:15px;outline:none;font-family:inherit">
+        <input type="password" id="kiosk-password" placeholder="••••••••" autocomplete="current-password" style="padding:12px 14px;background:var(--surface2);border:1px solid var(--border2);border-radius:12px;color:var(--text);font-size:16px;outline:none;font-family:inherit">
       </div>
-      <button onclick="kioskLogin()" style="width:100%;padding:14px;background:var(--accent);color:#0c0f0a;border:none;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer;margin-top:8px;font-family:inherit">Logga in</button>
+      <button type="button" onclick="kioskLogin()" style="width:100%;min-height:52px;padding:14px;background:var(--accent);color:#0c0f0a;border:none;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer;margin-top:8px;font-family:inherit">Logga in</button>
       <div id="login-error" style="font-size:13px;color:var(--danger);margin-top:12px;min-height:20px"></div>
     </div>
   </div>
@@ -268,7 +305,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 
     <!-- Feedback + inv-panel -->
     <div style="display:flex;flex-direction:column;gap:12px;flex:1;overflow:hidden">
-      <div class="feedback-card" id="feedback-card">
+      <div class="feedback-card" id="feedback-card" aria-live="polite">
         <div class="idle-icon-wrap">
           <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
             <rect x="3" y="3" width="3" height="12" rx="0.5" fill="#9e9b96" opacity=".9"/>
@@ -292,6 +329,11 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
           <button class="btn btn-primary" onclick="finishInventory()">✓ Avsluta</button>
         </div>
       </div>
+    </div>
+
+    <div class="scan-entry">
+      <input type="text" id="barcode-input" class="barcode-input" inputmode="none" enterkeyhint="done" virtualkeyboardpolicy="manual" placeholder="Skanna streckkod" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-form-type="other" data-scan-input="true" aria-label="Streckkod">
+      <button type="button" class="keyboard-toggle" id="keyboard-toggle" aria-pressed="false" onclick="toggleScanKeyboard()">Tangentbord</button>
     </div>
 
     <!-- Lägesväljare + timer -->
@@ -318,8 +360,6 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 <!-- Gömt input -->
 <input type="text" name="fakeuser" autocomplete="username" tabindex="-1" aria-hidden="true" style="position:absolute;height:0;width:0;opacity:0;pointer-events:none;left:-9999px">
 <input type="password" name="fakepass" autocomplete="new-password" tabindex="-1" aria-hidden="true" style="position:absolute;height:0;width:0;opacity:0;pointer-events:none;left:-9999px">
-<input type="text" id="barcode-input" class="barcode-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-form-type="other">
-
 <!-- ── MODAL: Välj fordon ── -->
 <div class="modal-overlay" id="vehicle-modal">
   <div class="modal-box">
@@ -384,6 +424,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
   </div>
 </div>
 
+<script src="/js/scan-wedge.js"></script>
 <script>
 // ═══════════════════════════════════════════
 //  Scanny Kiosk — med användare & fordon
@@ -394,8 +435,11 @@ let currentUser    = null;
 let currentVehicle = null;  // { id, regNr, ... } eller null
 let currentMode    = 'out';
 let inventory      = {};
-let scanCooldown   = false;
-let lastScan       = { code: null, t: 0 };   // dedupe mot dubbel-avfyrning (gun/manuell)
+let scanWedge      = null;
+let scanFeedbackGen = 0;
+const scanDedupe = (window.ScannyScan ? ScannyScan.createScanDedupe(ScannyScan.SCAN_DEDUPE_MS) : { accept: () => true });
+const scanQueue = (window.ScannyScan ? ScannyScan.createScanQueue() : { enqueue: (_c, task) => task() });
+const pendingQty = (window.ScannyScan ? ScannyScan.createPendingQty() : { get: () => 0, preview: () => ({ status: 'unknown' }), settle() {} });
 
 const AUTO_RESET_MS   = 10 * 60 * 1000;
 const LOGOUT_IDLE_MS  = 10 * 60 * 1000;
@@ -536,6 +580,7 @@ function setStatus(ok) {
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
+  if (id !== 'screen-scan' && scanWedge) scanWedge.clear();
 }
 
 // ════════════════════════════════
@@ -844,82 +889,128 @@ function showFeedback(type, icon, name, msg, qty) {
 
 function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-// ════════════════════════════════
-//  GLOBAL TANGENTBORDSFÅNGST
-// ════════════════════════════════
-document.addEventListener('keydown', e => {
-  if (e.key === 'Tab' || e.key === 'Escape' || e.metaKey || e.ctrlKey) return;
-  const isModal = document.getElementById('vehicle-modal').style.display !== 'none' ||
-                  document.getElementById('unknown-modal').style.display !== 'none';
-  if (isModal) return;
-  const active = document.activeElement;
-  const isOther = (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && active.id !== 'barcode-input';
-  if (isOther) return;
-  if (document.getElementById('screen-scan').classList.contains('active')) focusInput();
-});
-function focusInput() { document.getElementById('barcode-input')?.focus(); }
-
-document.getElementById('barcode-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter') { const v = e.target.value.trim(); if (v) { scanProduct(v); e.target.value = ''; } }
-});
+// Skanningsfokus och tangentbordskil sköts av scan-wedge (initScanWedge).
+function kioskScanContext() {
+  const input = document.getElementById('barcode-input');
+  const scanActive = !!document.getElementById('screen-scan')?.classList.contains('active');
+  const modalOpen = Array.prototype.some.call(document.querySelectorAll('.modal-overlay'), (el) => {
+    const d = el.style && el.style.display;
+    return !!(d && d !== 'none');
+  });
+  return ScannyScan.contextFromActiveElement(document.activeElement, input, scanActive, modalOpen);
+}
+function focusInput() {
+  if (scanWedge) { scanWedge.refocus(); return; }
+  if (!document.getElementById('screen-scan')?.classList.contains('active')) return;
+  document.getElementById('barcode-input')?.focus();
+}
+function toggleScanKeyboard() {
+  if (!scanWedge) return;
+  const on = !scanWedge.isManual();
+  scanWedge.setManual(on);
+  const btn = document.getElementById('keyboard-toggle');
+  if (!btn) return;
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  btn.classList.toggle('active', on);
+  btn.textContent = on ? 'Dölj tangentbord' : 'Tangentbord';
+}
+function initScanWedge() {
+  if (!window.ScannyScan || scanWedge) return;
+  scanWedge = ScannyScan.attachScanWedge({
+    getInput: () => document.getElementById('barcode-input'),
+    getContext: kioskScanContext,
+    onScan: (value) => scanProduct(value)
+  });
+}
 
 // ════════════════════════════════
 //  SKANNING
 // ════════════════════════════════
-async function scanProduct(code) {
-  const c = String(code).trim();
-  // Blockera bara EXAKT samma kod inom 250 ms (pistolens dubbel-avfyrning). Olika koder släpps direkt.
-  const now = Date.now();
-  if (c === lastScan.code && (now - lastScan.t) < 250) return;
-  lastScan = { code: c, t: now };
+function scanProduct(code) {
+  const c = String(code || '').trim();
+  if (!scanDedupe.accept(c, Date.now())) return;
+  const mode = currentMode;
   resetLogoutTimer();
-  if (currentMode === 'add') startAutoReset();
+  if (mode === 'add') startAutoReset();
+  const fbGen = ++scanFeedbackGen;
+  const local = (db.products || []).find(x => x.code === c);
 
-  // Inventeringsläge
-  if (currentMode === 'inv') {
-    const p = db.products.find(x => x.code === code.trim());
-    if (!p) { soundError(); showFeedback('err','✗','Okänd streckkod', code, null); return; }
-    if (!inventory[p.id]) inventory[p.id] = { id:p.id, name:p.name, code:p.code, previous:p.qty, scanned:0 };
-    inventory[p.id].scanned++;
+  if (mode === 'inv') {
+    if (!local) { soundError(); showFeedback('err','✗','Okänd streckkod', c, null); return; }
+    if (!inventory[local.id]) inventory[local.id] = { id: local.id, name: local.name, code: local.code, previous: local.qty, scanned: 0 };
+    inventory[local.id].scanned++;
     soundSuccess();
-    showFeedback('ok','📋', p.name, 'Inventering', inventory[p.id].scanned);
+    showFeedback('ok','📋', local.name, 'Inventering', inventory[local.id].scanned);
     renderInvList();
     return;
   }
 
-  const endpoint = currentMode === 'add' ? '/api/add' : '/api/scan';
-  try {
-    const res = await api('POST', endpoint, { code, actorId: currentUser?.id });
-    const p   = res.product;
-
-    // Logga uttag på fordon (icke-blockerande — fördröjer inte återkopplingen)
-    if (currentMode === 'out' && currentVehicle) {
-      const prod = db.products.find(x => x.name === p.name);
-      api('POST', '/api/vehicles/' + currentVehicle.id + '/log', {
-        productName: p.name,
-        qty: 1,
-        userName: currentUser?.name || '—',
-        articleNo: prod?.articleNo || '—',
-        supplier:  prod?.supplier  || '—'
-      }).catch(() => {});
-    }
-
-    if (currentMode === 'add') {
-      soundSuccess(); showFeedback('ok','📥', p.name, 'Påfyllning registrerad', p.qty);
-    } else if (res.criticalAlert) {
-      soundCritical(); showFeedback('err','🚨', p.name, 'KRITISKT LAGER — varning skickad!', p.qty);
-    } else if (res.orderCreated) {
-      soundWarning(); showFeedback('warn','⚠', p.name, 'Lagd i beställningskö', p.qty);
-    } else {
-      soundSuccess(); showFeedback('ok','✓', p.name, 'Uttag registrerat', p.qty);
-    }
-    // Uppdatera lokalt direkt; full synk sker när skanningen lugnat sig
-    applyProductUpdate(p);
-    scheduleSync();
-  } catch (err) {
-    if (err.message?.startsWith('Okänd streckkod')) { soundError(); showAddUnknown(code); }
-    else { soundError(); showFeedback('err','✗','Fel', err.message, null); }
+  const plan = pendingQty.preview(local, mode);
+  if (plan.status === 'ok') {
+    soundSuccess();
+    if (mode === 'add') showFeedback('ok','📥', plan.name, 'Påfyllning registrerad', plan.qty);
+    else showFeedback('ok','✓', plan.name, 'Uttag registrerat', plan.qty);
+  } else if (plan.status === 'empty') {
+    soundError();
+    showFeedback('err','✗', plan.name, 'Slut på lager', null);
+  } else {
+    playTone(660, .05, 'sine', .12);
+    showFeedback('pending','…', 'Skannar', c, null);
   }
+
+  const delta = plan.delta || 0;
+  const endpoint = mode === 'add' ? '/api/add' : '/api/scan';
+  scanQueue.enqueue(c, async () => {
+    let settled = false;
+    const settleOnce = () => {
+      if (settled || !delta) return;
+      settled = true;
+      pendingQty.settle(c, delta);
+    };
+    try {
+      const res = await api('POST', endpoint, { code: c, actorId: currentUser?.id });
+      settleOnce();
+      if (!res || !res.product) return;
+      const p = res.product;
+      if (mode === 'out' && currentVehicle) {
+        const prod = (db.products || []).find(x => x.code === c) || (db.products || []).find(x => x.name === p.name);
+        api('POST', '/api/vehicles/' + currentVehicle.id + '/log', {
+          productName: p.name,
+          qty: 1,
+          userName: currentUser?.name || '—',
+          articleNo: prod?.articleNo || '—',
+          supplier: prod?.supplier || '—'
+        }).catch(() => {});
+      }
+      applyProductUpdate(p);
+      if (fbGen === scanFeedbackGen) {
+        const same = plan.status === 'ok' && p.qty === plan.qty;
+        if (mode !== 'add' && res.criticalAlert) {
+          soundCritical();
+          showFeedback('err','🚨', p.name, 'KRITISKT LAGER — varning skickad!', p.qty);
+        } else if (mode !== 'add' && res.orderCreated) {
+          soundWarning();
+          showFeedback('warn','⚠', p.name, 'Lagd i beställningskö', p.qty);
+        } else if (!same) {
+          if (plan.status !== 'ok') soundSuccess();
+          if (mode === 'add') showFeedback('ok','📥', p.name, 'Påfyllning registrerad', p.qty);
+          else showFeedback('ok','✓', p.name, 'Uttag registrerat', p.qty);
+        }
+      } else if (res.criticalAlert) {
+        soundCritical();
+      }
+      scheduleSync();
+    } catch (err) {
+      settleOnce();
+      const msg = err && err.message ? err.message : 'Serverfel';
+      if (msg.startsWith('Okänd streckkod')) {
+        if (fbGen === scanFeedbackGen) { soundError(); showAddUnknown(c); }
+      } else if (fbGen === scanFeedbackGen) {
+        if (plan.status !== 'empty') soundError();
+        showFeedback('err','✗','Fel', msg, null);
+      }
+    }
+  }).catch(() => {});
 }
 
 // ════════════════════════════════
@@ -983,6 +1074,7 @@ async function finishInventory() {
 }
 
 // ── Start ──
+initScanWedge();
 initKiosk();
 setInterval(loadDb, 15000);
 </script>
