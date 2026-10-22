@@ -824,13 +824,41 @@ function renderLog() {
       ).join('');
 }
 
+let smtpFieldsTouched = false;
+
+function setSmtpFieldsOpen(open) {
+  const fields = document.getElementById('smtp-fields');
+  const btn = document.getElementById('smtp-toggle');
+  if (fields) fields.hidden = !open;
+  if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function toggleSmtpFields() {
+  smtpFieldsTouched = true;
+  const fields = document.getElementById('smtp-fields');
+  setSmtpFieldsOpen(!fields || fields.hidden);
+}
+
 function renderSettings() {
   const s = db.settings || {};
   document.getElementById('s-email').value    = s.email    || '';
+  const alertEl = document.getElementById('s-alert-email');
+  const alertHint = document.getElementById('alert-email-hint');
+  if (alertEl) {
+    const dedicated = String(s.alertEmail || '').trim();
+    const fallback = String(s.email || '').trim();
+    alertEl.value = dedicated;
+    if (alertHint) {
+      alertHint.textContent = !dedicated && fallback
+        ? 'Larm går tills vidare till ' + fallback + '. Fyll i fältet för att ange en eller flera adresser, avgränsade med kommatecken.'
+        : 'En eller flera adresser, avgränsade med kommatecken. Skickas när en artikel når kritisk nivå. Lämna tomt för att använda chefens e-post.';
+    }
+  }
   document.getElementById('s-workshop').value = s.workshop || '';
   document.getElementById('s-host').value     = s.smtpHost || '';
   document.getElementById('s-port').value     = s.smtpPort || 587;
   document.getElementById('s-user').value     = s.smtpUser || '';
+  if (!smtpFieldsTouched) setSmtpFieldsOpen(!!String(s.smtpUser || '').trim());
 
   // Etikettskrivare
   const sizeEl = document.getElementById('s-label-size');
@@ -854,9 +882,6 @@ function renderSettings() {
     }
   }
 
-  // Central avsändare: tom SMTP betyder att Scanny skickar från noreply@scanny.se
-  const envNotice = document.getElementById('smtp-env-notice');
-  if (envNotice) envNotice.style.display = (s.smtpCentral && !String(s.smtpUser || '').trim()) ? 'block' : 'none';
 }
 
 function renderAll() {
@@ -1307,6 +1332,7 @@ async function addProduct() {
 // ═══════════════════════════════════════════════════════════════
 async function saveSettings() {
   const dayVal = document.getElementById('s-schedule-day').value;
+  const alertEl = document.getElementById('s-alert-email');
   const body = {
     email:        document.getElementById('s-email').value.trim(),
     workshop:     document.getElementById('s-workshop').value.trim(),
@@ -1316,6 +1342,7 @@ async function saveSettings() {
     scheduleDay:  dayVal !== '' ? parseInt(dayVal) : null,
     scheduleTime: document.getElementById('s-schedule-time').value || '07:00',
   };
+  if (alertEl) body.alertEmail = alertEl.value.trim();
   const sizeEl = document.getElementById('s-label-size');
   if (sizeEl) {
     body.labelSize = sizeEl.value || '62x29';
@@ -1329,6 +1356,40 @@ async function saveSettings() {
     toast('Inställningar sparade');
     await loadAll();
   } catch (err) { toast(err.message, 'error'); }
+}
+
+function setTestAlertStatus(msg, ok) {
+  const el = document.getElementById('test-alert-status');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.style.color = ok ? 'var(--accent)' : 'var(--danger)';
+}
+
+async function sendTestAlertEmail() {
+  const alertEl = document.getElementById('s-alert-email');
+  const to = alertEl ? alertEl.value.trim() : '';
+  const saved = db.settings || {};
+  const btn = document.getElementById('btn-test-alert');
+  if (!to && !String(saved.alertEmail || saved.email || '').trim()) {
+    setTestAlertStatus('Ange en e-postadress för lagerlarm', false);
+    toast('Ange en e-postadress för lagerlarm', 'error');
+    return;
+  }
+  if (btn) btn.disabled = true;
+  setTestAlertStatus('Skickar testmejl…', true);
+  try {
+    const res = await api('POST', '/api/settings/test-alert', to ? { to } : {});
+    if (!res) return;
+    const msg = 'Testmejl skickat';
+    setTestAlertStatus(msg, true);
+    toast(msg, 'success');
+  } catch (err) {
+    const msg = err.message || 'Kunde inte skicka testmejl';
+    setTestAlertStatus(msg, false);
+    toast(msg, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════

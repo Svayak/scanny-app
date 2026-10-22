@@ -11,6 +11,7 @@ const mongoSanitize = require('express-mongo-sanitize');
 const rateLimit = require('express-rate-limit');
 const { Tenant, User, Product, Order, Vehicle, Log, InventoryReport } = require('./models');
 const mail = require('./mail');
+const allowTestAlert = mail.createRateLimiter({ windowMs: 15 * 60 * 1000, max: 5 });
 const ALLOWED_ORIGINS = ['https://scanny.se', 'https://www.scanny.se', 'http://localhost:3001'];
 const { authMiddleware, adminOnly, JWT_SECRET } = require('./auth');
 // Etikettmodulen kräver bwip-js + sharp (valfria beroenden). Ladda skyddat så att
@@ -416,11 +417,12 @@ app.post('/api/scan', authMiddleware, checkTenantActive, requirePermission('scan
       criticalAlert = decision.criticalAlert;
       if (criticalAlert) {
         const s = tc.settings;
+        const recipients = mail.alertRecipients(s);
         const now = new Date().toLocaleString('sv-SE');
         const text = `KRITISK LAGERVARNING — ${s.workshop}\n${now}\n\nProdukten "${p.name}" har nått kritisk lagernivå!\n\n  Aktuellt antal:    ${p.qty} st\n  Kritisk nivå:      ${p.critical} st\n  Artikelnummer:  ${p.articleNo||'—'}\n  Leverantör:       ${p.supplier||'—'}\n  Streckkod:        ${p.code}\n\nÅtgärd krävs omgående!\n\nVänliga hälsningar,\nScanny — ${s.workshop}`;
-        mail.sendTenantMail(s, { to: s.email, subject: `⚠️ KRITISKT: ${p.name} — ${s.workshop}`, text })
+        mail.sendTenantMail(s, { to: recipients.join(', '), subject: `⚠️ KRITISKT: ${p.name} — ${s.workshop}`, text })
           .then(() => addLog(req.tenantId, `KRITISK — e-post skickad: ${p.name}`, 'order'))
-          .catch(err => addLog(req.tenantId, `E-post misslyckades: ${err.message}`, 'warn'));
+          .catch(err => addLog(req.tenantId, `E-post misslyckades: ${mail.safeErrorMessage(err, [s.smtpPass])}`, 'warn'));
       }
     }
     res.json({ product: p, orderCreated, criticalAlert });
@@ -681,6 +683,33 @@ app.put('/api/settings', authMiddleware, adminOnly, async (req, res) => {
     await tenant.save();
     res.json({ ok: true });
   } catch (err) { serverError(res, err); }
+});
+
+app.post('/api/settings/test-alert', authMiddleware, adminOnly, async (req, res) => {
+  let smtpPass = '';
+  try {
+    const tenant = await Tenant.findById(req.tenantId);
+    if (!tenant) return res.status(404).json({ error: 'Tenant hittades inte' });
+    const s = tenant.settings?.toObject ? tenant.settings.toObject() : (tenant.settings || {});
+    smtpPass = s.smtpPass || '';
+    const decision = mail.resolveTestRecipients(s, req.body?.to);
+    if (decision.error) return res.status(400).json({ error: decision.error });
+    if (!mail.resolveSender(s)) return res.status(400).json({ error: 'Ingen avsändare är konfigurerad' });
+    if (!allowTestAlert(String(req.tenantId))) {
+      return res.status(429).json({ error: 'För många testmejl. Försök igen om en stund.' });
+    }
+    const workshop = s.workshop || tenant.name || '';
+    await mail.sendTenantMail(s, {
+      to: decision.recipients.join(', '),
+      subject: 'Testmejl från Scanny — lagerlarm',
+      text: `Det här är ett test av lagerlarm från Scanny${workshop ? ` (${workshop})` : ''}.\n\nOm du läser det här når kritiska lagervarningar den här adressen.\n\nVänliga hälsningar,\nScanny`
+    });
+    await addLog(req.tenantId, 'Testmejl för lagerlarm skickat', 'order');
+    res.json({ ok: true, sent: decision.recipients.length });
+  } catch (err) {
+    console.error('[FEL] testmejl:', mail.safeErrorMessage(err, [smtpPass, process.env.ACS_EMAIL_CONNECTION_STRING]));
+    res.status(502).json({ error: 'Kunde inte skicka testmejl' });
+  }
 });
 
 // ══════════════════════════════════════════
