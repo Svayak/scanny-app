@@ -22,9 +22,11 @@
   --nav-h:60px;
 }
 
+html{touch-action:manipulation}
 body{
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;
+  touch-action:manipulation;
 }
 
 body::before{
@@ -67,22 +69,29 @@ body::before{
 
 /* ── Skanning ── */
 .scan-zone{background:var(--surface);border:2px dashed var(--border);border-radius:var(--radius-lg);padding:2rem 1.5rem;text-align:center;margin-bottom:1.5rem;transition:border-color .2s,background .2s}
-.scan-zone.scanned{border-color:var(--accent);border-style:solid;background:rgba(74,222,128,.06)}
-.scan-zone.error{border-color:var(--danger);border-style:solid;background:rgba(248,113,113,.06)}
+.scan-zone.scanned{border-color:var(--accent);border-style:solid;background:rgba(74,222,128,.06);animation:scan-flash .18s ease}
+.scan-zone.error{border-color:var(--danger);border-style:solid;background:rgba(248,113,113,.06);animation:scan-shake .28s ease}
+@keyframes scan-flash{from{transform:scale(.985)}to{transform:none}}
+@keyframes scan-shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
 .scan-icon{color:var(--text3);margin-bottom:12px}
 .scan-label{font-size:15px;font-weight:500;margin-bottom:1rem;color:var(--text2)}
-.barcode-input{width:100%;max-width:320px;font-size:20px;text-align:center;padding:10px 14px;border:1.5px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);letter-spacing:2px;outline:none;transition:border-color .15s}
+.scan-entry{display:flex;gap:8px;align-items:stretch;justify-content:center;max-width:560px;margin:0 auto}
+.barcode-input{width:100%;max-width:none;flex:1;min-height:52px;font-size:20px;text-align:center;padding:12px 14px;border:1.5px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);letter-spacing:2px;outline:none;transition:border-color .15s;caret-color:transparent}
+.barcode-input.manual-keyboard{caret-color:auto;border-color:var(--accent)}
 .barcode-input:focus{border-color:var(--accent)}
-.barcode-input::placeholder{color:var(--text3)}
-.scan-hint{font-size:12px;color:var(--text3);margin-top:8px}
-.scan-feedback{padding:12px 16px;border-radius:var(--radius);font-weight:500;margin-bottom:1rem;font-size:14px}
+.barcode-input::placeholder{color:var(--text3);letter-spacing:0}
+.keyboard-toggle{min-height:52px;min-width:48px;padding:12px 16px;font-size:15px;font-weight:700}
+.keyboard-toggle.active{border-color:var(--accent);color:var(--accent)}
+.scan-hint{font-size:13px;color:var(--text3);margin-top:8px}
+.scan-feedback{padding:16px 18px;border-radius:var(--radius);font-weight:600;margin-bottom:1rem;font-size:18px}
 .scan-feedback.ok{background:rgba(74,222,128,.12);color:var(--accent);border:1px solid rgba(74,222,128,.25)}
 .scan-feedback.warn{background:rgba(251,191,36,.12);color:var(--warn);border:1px solid rgba(251,191,36,.25)}
 .scan-feedback.err{background:rgba(248,113,113,.12);color:var(--danger);border:1px solid rgba(248,113,113,.25)}
+.scan-feedback.pending{background:var(--surface2);color:var(--text);border:1px solid var(--border2)}
 
 /* ── Snabbgrid ── */
 .quick-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}
-.quick-btn{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;text-align:left;cursor:pointer;transition:all .12s}
+.quick-btn{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px;min-height:72px;text-align:left;cursor:pointer;transition:all .12s}
 .quick-btn:hover{background:var(--surface2);border-color:var(--border2)}
 .quick-btn:active{transform:scale(.97)}
 .quick-btn .qb-name{font-size:13px;font-weight:500;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
@@ -120,7 +129,7 @@ tr:hover td{background:var(--surface2)}
 .btn-sm{padding:4px 10px;font-size:12px}
 .btn-danger{border-color:rgba(248,113,113,.4);color:var(--danger);background:rgba(248,113,113,.08)}
 .btn-danger:hover{background:rgba(248,113,113,.15)}
-.cam-btn{margin-top:.75rem;display:inline-flex;align-items:center;gap:6px}
+.cam-btn{margin-top:.75rem;display:inline-flex;align-items:center;gap:6px;min-height:48px;padding:12px 16px;font-size:15px}
 
 /* ── Kortkomponent ── */
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem}
@@ -178,8 +187,8 @@ tr:hover td{background:var(--surface2)}
 .cam-btn-mobile{display:none}
 
 /* ── Lägesväljare ── */
-.mode-bar{display:flex;gap:6px;margin-bottom:.75rem}
-.mode-btn{flex:1;padding:8px;font-size:13px;font-weight:600;border-radius:var(--radius);border:2px solid var(--border);background:var(--surface2);color:var(--text2);cursor:pointer;transition:all .15s}
+.mode-bar{display:flex;gap:8px;margin-bottom:.75rem}
+.mode-btn{flex:1;padding:14px 10px;min-height:52px;font-size:16px;font-weight:700;border-radius:var(--radius);border:2px solid var(--border);background:var(--surface2);color:var(--text2);cursor:pointer;transition:all .15s}
 .mode-btn.mode-out.active{background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.5);color:#f87171}
 .mode-btn.mode-add.active{background:rgba(74,222,128,.12);border-color:rgba(74,222,128,.5);color:var(--accent)}
 .mode-btn.mode-inv.active{background:rgba(167,139,250,.12);border-color:rgba(167,139,250,.5);color:#a78bfa}
@@ -242,7 +251,7 @@ tr:hover td{background:var(--surface2)}
   .scan-zone{padding:1.25rem .75rem}
   .quick-grid{grid-template-columns:repeat(2,1fr);gap:6px}
   .cam-btn{display:none}
-  .cam-btn-mobile{display:flex!important;width:100%;padding:12px;font-size:14px;font-weight:700;justify-content:center;gap:8px;border-radius:var(--radius-lg);background:var(--accent);color:#0c0f0a;border:none;cursor:pointer;margin-top:.75rem}
+  .cam-btn-mobile{display:flex!important;width:100%;min-height:52px;padding:14px;font-size:16px;font-weight:700;justify-content:center;gap:8px;border-radius:var(--radius-lg);background:var(--accent);color:#0c0f0a;border:none;cursor:pointer;margin-top:.75rem}
   .toast{bottom:70px;right:12px;left:12px;max-width:none;text-align:center}
   th:nth-child(2),td:nth-child(2),th:nth-child(4),td:nth-child(4){display:none}
   .modal-box{padding:1.25rem}

@@ -4,40 +4,21 @@
 
 // ── Globalt tillstånd ──
 let db = { products: [], orders: [], orderHistory: [], inventoryReports: [], logs: [], settings: {}, users: [], vehicles: [] };
-let codeReader = null, cameraActive = false, currentCameraIndex = 0, availableCameras = [], scanCooldown = false;
-let lastScan = { code: null, t: 0 };   // dedupe mot dubbel-avfyrning av samma kod
+let codeReader = null, cameraActive = false, currentCameraIndex = 0, availableCameras = [];
 let lastCamScan = { code: null, t: 0 };   // kameran avkodar löpande — egen längre spärr per kod
+let scanWedge = null;
+const scanDedupe = (window.ScannyScan ? ScannyScan.createScanDedupe(ScannyScan.SCAN_DEDUPE_MS) : { accept: () => true });
+const scanQueue = (window.ScannyScan ? ScannyScan.createScanQueue() : { enqueue: (_c, task) => task() });
+const pendingQty = (window.ScannyScan ? ScannyScan.createPendingQty() : { get: () => 0, preview: () => ({ status: 'unknown' }), settle() {} });
+let scanFeedbackGen = 0;
 let _inflight = 0;   // antal pågående lager-anrop (för att synka först när allt landat)
 let currentMode = 'out';
 let inventory = {};
 let autoResetTimer = null;
 const AUTO_RESET_MS = 20 * 60 * 1000;
 
-// ═══════════════════════════════════════════════════════════════
-//  Global tangentbordsfångst — håller streckkodsinmatning fokuserad
-//  oavsett vart användaren klickar på sidan
-// ═══════════════════════════════════════════════════════════════
-document.addEventListener('keydown', (e) => {
-  // Ignorera om en modal är öppen, ett input/textarea är fokuserat
-  // (utom barcode-input), eller om det är en funktionstangent
-  if (e.key === 'Tab' || e.key === 'Escape' || e.metaKey || e.ctrlKey) return;
-  const active = document.activeElement;
-  const isModal = document.getElementById('unknown-modal').style.display !== 'none' ||
-                  document.getElementById('edit-modal').style.display !== 'none';
-  if (isModal) return;
-  const isOtherInput = (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') &&
-                       active.id !== 'barcode-input';
-  if (isOtherInput) return;
-
-  // Om scan-fliken är aktiv — fokusera streckkodsinmatningen
-  const scanPanel = document.getElementById('tab-scan');
-  if (scanPanel && scanPanel.classList.contains('active')) {
-    const inp = document.getElementById('barcode-input');
-    if (inp && document.activeElement !== inp) {
-      inp.focus();
-    }
-  }
-});
+// Skanningsfokus sköts av scan-wedge (initScanWedge längst ned): fältet
+// återfår fokus efter åtgärder, men inte när ett synligt textfält är aktivt.
 
 // ═══════════════════════════════════════════════════════════════
 //  Lägeshantering (Uttag / Addera / Inventering)
@@ -83,8 +64,7 @@ function setMode(mode) {
   if (mode === 'add') startAutoReset();
   else clearTimeout(autoResetTimer);
 
-  const inp = document.getElementById('barcode-input');
-  if (inp) inp.focus();
+  focusScanField();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -286,10 +266,8 @@ function showTab(name) {
   if (panel) panel.classList.add('active');
   if (name !== 'scan') stopCamera();
   renderAll();
-  if (name === 'scan') {
-    const inp = document.getElementById('barcode-input');
-    if (inp) inp.focus();
-  }
+  if (name === 'scan') focusScanField();
+  else if (scanWedge) scanWedge.clear();
 }
 
 // Navigera till en admin-undersida och markera Admin som aktiv i menyn
@@ -323,9 +301,12 @@ function showAddUnknown(code) {
 
 function closeUnknownModal() {
   document.getElementById('unknown-modal').style.display = 'none';
-  const inp = document.getElementById('barcode-input');
-  inp.value = '';
-  inp.focus();
+  if (scanWedge) scanWedge.clear();
+  else {
+    const inp = document.getElementById('barcode-input');
+    if (inp) inp.value = '';
+  }
+  focusScanField();
 }
 
 async function saveUnknownProduct() {
@@ -411,89 +392,200 @@ editModal.addEventListener('keydown', e => {
 // ═══════════════════════════════════════════════════════════════
 //  Skanning
 // ═══════════════════════════════════════════════════════════════
-async function scanProduct(code) {
-  const c = String(code).trim();
-  // Blockera bara EXAKT samma kod som skannades för under 250 ms sedan (pistolens dubbel-avfyrning).
-  // Olika koder – och medvetna upprepningar långsammare än så – släpps igenom direkt.
-  const now = Date.now();
-  if (c === lastScan.code && (now - lastScan.t) < 250) return;
-  lastScan = { code: c, t: now };
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx = null;
+function getAudioCtx() { if (!AudioCtx) return null; if (!audioCtx) audioCtx = new AudioCtx(); return audioCtx; }
+function playTone(freq, dur, type, vol) {
+  try {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    const osc = ctx.createOscillator(), gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.type = type || 'sine'; osc.frequency.value = freq;
+    gain.gain.setValueAtTime(vol == null ? 0.2 : vol, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + dur);
+  } catch (_) {}
+}
+function soundSuccess() { playTone(880, .1, 'sine', .2); setTimeout(() => playTone(1100, .14, 'sine', .16), 90); }
+function soundWarning() { playTone(440, .2, 'triangle', .24); }
+function soundError()   { playTone(200, .16, 'sawtooth', .24); }
+function soundCritical(){ playTone(300, .12, 'square', .28); setTimeout(() => playTone(220, .2, 'square', .28), 140); }
 
-  if (currentMode === 'add') startAutoReset();
-
+let scanZoneTimer = null;
+let scanZoneGen = 0;
+function paintScanFeedback(kind, text) {
   const zone = document.getElementById('scan-zone');
-  const fb   = document.getElementById('scan-feedback');
+  const fb = document.getElementById('scan-feedback');
+  if (!zone || !fb) return;
+  zone.className = kind === 'err' ? 'scan-zone error' : (kind === 'ok' || kind === 'warn') ? 'scan-zone scanned' : 'scan-zone';
+  fb.style.display = 'block';
+  fb.className = 'scan-feedback ' + (kind === 'pending' ? 'pending' : kind === 'warn' ? 'warn' : kind === 'err' ? 'err' : 'ok');
+  fb.textContent = text;
+  const gen = ++scanZoneGen;
+  clearTimeout(scanZoneTimer);
+  scanZoneTimer = setTimeout(() => {
+    if (gen !== scanZoneGen) return;
+    zone.className = 'scan-zone';
+  }, kind === 'err' ? 1400 : 800);
+}
 
-  // Inventeringsläge — räkna lokalt
-  if (currentMode === 'inv') {
-    const p = db.products.find(x => x.code === code.trim());
-    if (!p) {
-      zone.className = 'scan-zone error';
-      fb.style.display = 'block'; fb.className = 'scan-feedback err';
-      fb.textContent = '✗ Okänd streckkod: ' + code;
-      setTimeout(() => { zone.className = 'scan-zone'; }, 1200);
+function patchQuickQty(code, qty) {
+  if (typeof CSS === 'undefined' || typeof CSS.escape !== 'function') return;
+  const el = document.querySelector('.quick-btn[data-code="' + CSS.escape(code) + '"] .qb-qty');
+  if (!el) return;
+  const p = (db.products || []).find(x => x.code === code);
+  const min = p ? p.min : 0;
+  const cls = qty === 0 ? 'danger' : qty <= min ? 'warn' : 'ok';
+  el.textContent = qty + ' st';
+  el.className = 'qb-qty ' + cls;
+}
+
+function focusScanField() {
+  if (scanWedge) { scanWedge.refocus(); return; }
+  const panel = document.getElementById('tab-scan');
+  if (!panel || !panel.classList.contains('active')) return;
+  const inp = document.getElementById('barcode-input');
+  if (inp && document.activeElement !== inp) inp.focus();
+}
+
+function adminScanContext() {
+  const input = document.getElementById('barcode-input');
+  const panel = document.getElementById('tab-scan');
+  const scanActive = !!(panel && panel.classList.contains('active'));
+  const modalOpen = Array.prototype.some.call(document.querySelectorAll('.modal-overlay'), (el) => {
+    const d = el.style && el.style.display;
+    return !!(d && d !== 'none');
+  });
+  return ScannyScan.contextFromActiveElement(document.activeElement, input, scanActive, modalOpen);
+}
+
+function toggleScanKeyboard() {
+  if (!scanWedge) return;
+  const on = !scanWedge.isManual();
+  scanWedge.setManual(on);
+  const btn = document.getElementById('keyboard-toggle');
+  if (!btn) return;
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  btn.classList.toggle('active', on);
+  btn.textContent = on ? 'Dölj tangentbord' : 'Tangentbord';
+}
+
+function scanProduct(code) {
+  const c = String(code || '').trim();
+  if (!scanDedupe.accept(c, Date.now())) return;
+  const mode = currentMode;
+  if (mode === 'add') startAutoReset();
+  const fbGen = ++scanFeedbackGen;
+  const local = (db.products || []).find(x => x.code === c);
+
+  if (mode === 'inv') {
+    const zone = document.getElementById('scan-zone');
+    const fb = document.getElementById('scan-feedback');
+    if (!local) {
+      soundError();
+      if (zone && fb) {
+        zone.className = 'scan-zone error';
+        fb.style.display = 'block'; fb.className = 'scan-feedback err';
+        fb.textContent = '✗ Okänd streckkod: ' + c;
+        setTimeout(() => { if (zone.className.indexOf('error') !== -1) zone.className = 'scan-zone'; }, 1200);
+      }
       return;
     }
-    if (!inventory[p.id]) inventory[p.id] = { id: p.id, name: p.name, code: p.code, previous: p.qty, scanned: 0 };
-    inventory[p.id].scanned++;
-    zone.className = 'scan-zone scanned';
-    fb.style.display = 'block'; fb.className = 'scan-feedback ok';
-    fb.textContent = '✓ ' + p.name + ' — ' + inventory[p.id].scanned + ' st räknade';
-    setTimeout(() => { zone.className = 'scan-zone'; }, 600);
-    document.getElementById('barcode-input').value = '';
+    if (!inventory[local.id]) inventory[local.id] = { id: local.id, name: local.name, code: local.code, previous: local.qty, scanned: 0 };
+    inventory[local.id].scanned++;
+    soundSuccess();
+    if (zone && fb) {
+      zone.className = 'scan-zone scanned';
+      fb.style.display = 'block'; fb.className = 'scan-feedback ok';
+      fb.textContent = '✓ ' + local.name + ' — ' + inventory[local.id].scanned + ' st räknade';
+      setTimeout(() => { zone.className = 'scan-zone'; }, 600);
+    }
     renderInvList();
+    focusScanField();
     return;
   }
 
-  // Uttag eller Addera
-  const endpoint = currentMode === 'add' ? '/api/add' : '/api/scan';
-  try {
-    const res = await api('POST', endpoint, { code });
-    const p   = res.product;
-    zone.className = 'scan-zone scanned';
-    fb.style.display = 'block';
-
-    if (currentMode === 'add') {
-      fb.className = 'scan-feedback ok';
-      fb.textContent = '+ ' + p.name + ' — nu ' + p.qty + ' st i lager';
-    } else if (res.criticalAlert) {
-      fb.className = 'scan-feedback err';
-      fb.textContent = '🚨 ' + p.name + ' — KRITISKT LAGER: ' + p.qty + ' st! Varning skickad till chefen.';
-    } else if (res.orderCreated) {
-      fb.className = 'scan-feedback warn';
-      fb.textContent = '⚠ ' + p.name + ' — ' + p.qty + ' kvar (under beställningsnivå). Lagd i beställningskö.';
-    } else {
-      fb.className = 'scan-feedback ok';
-      fb.textContent = '✓ ' + p.name + ' — ' + p.qty + ' kvar på lager';
-    }
-
-    setTimeout(() => { zone.className = 'scan-zone'; }, 700);
-    document.getElementById('barcode-input').value = '';
-    // Uppdatera lokalt direkt (snabbt) och synka fullt först när skanningen lugnat sig.
-    // Rita bara om metrics-raden här — inte hela tabellen/snabbrutorna (som annars byggs om vid varje skanning).
-    applyProductUpdate(p);
-    renderMetrics();
-    scheduleSync();
-  } catch (err) {
-    if (err.message && err.message.startsWith('Okänd streckkod')) {
-      zone.className = 'scan-zone';
-      fb.style.display = 'none';
-      showAddUnknown(code);
-    } else {
-      zone.className = 'scan-zone error';
-      fb.style.display = 'block'; fb.className = 'scan-feedback err';
-      fb.textContent = '✗ ' + err.message;
-      setTimeout(() => { zone.className = 'scan-zone'; }, 1200);
-    }
+  const plan = pendingQty.preview(local, mode);
+  if (plan.status === 'ok') {
+    soundSuccess();
+    const msg = mode === 'add'
+      ? '+ ' + plan.name + ' — nu ' + plan.qty + ' st i lager'
+      : '✓ ' + plan.name + ' — ' + plan.qty + ' kvar på lager';
+    paintScanFeedback('ok', msg);
+    patchQuickQty(c, plan.qty);
+  } else if (plan.status === 'empty') {
+    soundError();
+    paintScanFeedback('err', '✗ ' + plan.name + ' är slut på lager');
+  } else {
+    playTone(660, .05, 'sine', .12);
+    paintScanFeedback('pending', '… Skannar ' + c);
   }
+
+  const delta = plan.delta || 0;
+  const endpoint = mode === 'add' ? '/api/add' : '/api/scan';
+  scanQueue.enqueue(c, async () => {
+    let settled = false;
+    const settleOnce = () => {
+      if (settled || !delta) return;
+      settled = true;
+      pendingQty.settle(c, delta);
+    };
+    try {
+      const res = await api('POST', endpoint, { code: c });
+      settleOnce();
+      if (!res || !res.product) {
+        const prod = (db.products || []).find(x => x.code === c);
+        if (prod) patchQuickQty(c, prod.qty + pendingQty.get(c));
+        return;
+      }
+      const p = res.product;
+      applyProductUpdate(p);
+      patchQuickQty(c, (Number(p.qty) || 0) + pendingQty.get(c));
+      renderMetrics();
+      if (fbGen === scanFeedbackGen) {
+        const sameAsPreview = plan.status === 'ok' && p.qty === plan.qty;
+        if (mode !== 'add' && res.criticalAlert) {
+          soundCritical();
+          paintScanFeedback('err', '🚨 ' + p.name + ' — KRITISKT LAGER: ' + p.qty + ' st! Varning skickad till chefen.');
+        } else if (mode !== 'add' && res.orderCreated) {
+          soundWarning();
+          paintScanFeedback('warn', '⚠ ' + p.name + ' — ' + p.qty + ' kvar (under beställningsnivå). Lagd i beställningskö.');
+        } else if (!sameAsPreview) {
+          if (plan.status !== 'ok') soundSuccess();
+          const msg = mode === 'add'
+            ? '+ ' + p.name + ' — nu ' + p.qty + ' st i lager'
+            : '✓ ' + p.name + ' — ' + p.qty + ' kvar på lager';
+          paintScanFeedback('ok', msg);
+        }
+      } else if (mode !== 'add' && res.criticalAlert) {
+        soundCritical();
+        toast('Kritiskt lager: ' + p.name + ' (' + p.qty + ' st)', 'error');
+      }
+      scheduleSync();
+    } catch (err) {
+      settleOnce();
+      const msg = err && err.message ? err.message : 'Serverfel';
+      if (msg.startsWith('Okänd streckkod')) {
+        if (fbGen === scanFeedbackGen) {
+          const zone = document.getElementById('scan-zone');
+          const fb = document.getElementById('scan-feedback');
+          if (zone) zone.className = 'scan-zone';
+          if (fb) fb.style.display = 'none';
+          showAddUnknown(c);
+        }
+      } else if (fbGen === scanFeedbackGen) {
+        if (plan.status !== 'empty') soundError();
+        paintScanFeedback('err', '✗ ' + msg);
+        const prod = (db.products || []).find(x => x.code === c);
+        if (prod) patchQuickQty(c, prod.qty + pendingQty.get(c));
+      } else {
+        toast(msg, 'error');
+      }
+    }
+  }).catch(() => {});
+  focusScanField();
 }
-
-document.getElementById('barcode-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter') {
-    const val = e.target.value.trim();
-    if (val) scanProduct(val);
-  }
-});
 
 // ═══════════════════════════════════════════════════════════════
 //  Kamera
@@ -589,7 +681,7 @@ function renderQuickGrid() {
   });
   document.getElementById('quick-grid').innerHTML = sorted.map(p => {
     const cls = p.qty === 0 ? 'danger' : p.qty <= p.min ? 'warn' : 'ok';
-    return '<button class="quick-btn" onclick="scanProduct(\'' + escJs(p.code) + '\')">' +
+    return '<button type="button" class="quick-btn" data-code="' + esc(p.code) + '" onclick="scanProduct(\'' + escJs(p.code) + '\')">' +
       '<div class="qb-name" title="' + esc(p.name) + '">' + esc(p.name) + '</div>' +
       '<div class="qb-row"><span class="qb-code">' + esc(p.code.slice(-6)) + '</span>' +
       '<span class="qb-qty ' + cls + '">' + p.qty + ' st</span></div></button>';
@@ -1355,5 +1447,15 @@ async function markSent(id) {
 // ═══════════════════════════════════════════════════════════════
 //  Start
 // ═══════════════════════════════════════════════════════════════
+function initScanWedge() {
+  if (!window.ScannyScan || scanWedge) return;
+  scanWedge = ScannyScan.attachScanWedge({
+    getInput: () => document.getElementById('barcode-input'),
+    getContext: adminScanContext,
+    onScan: (value) => scanProduct(value)
+  });
+}
+
 loadAll();
 setInterval(loadAll, 15000);
+initScanWedge();
