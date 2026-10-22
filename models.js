@@ -8,8 +8,9 @@ const tenantSchema = new mongoose.Schema({
   plan:      { type: String, enum: ['bas', 'standard', 'pro'], default: 'bas' },
   createdAt: { type: Date, default: Date.now },
   settings: {
-    email:    { type: String, default: '' },
-    workshop: { type: String, default: '' },
+    email:      { type: String, default: '' },
+    alertEmail: { type: String, default: '' },
+    workshop:   { type: String, default: '' },
     smtpHost: { type: String, default: 'smtp.gmail.com' },
     smtpPort: { type: Number, default: 587 },
     smtpUser: { type: String, default: '' },

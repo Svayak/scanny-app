@@ -1,6 +1,14 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { createMailService, applySettingsPatch, crossedCriticalThreshold } = require('../mail');
+const {
+  createMailService,
+  applySettingsPatch,
+  crossedCriticalThreshold,
+  alertRecipients,
+  resolveTestRecipients,
+  createRateLimiter,
+  safeErrorMessage
+} = require('../mail');
 
 const FROM = 'noreply@scanny.se';
 const CONNECTION = 'endpoint=https://example.communication.azure.com/;accesskey=super-secret-value';
@@ -199,6 +207,8 @@ describe('critical threshold', () => {
 
     const acs = service({ env: acsEnv() });
     assert.deepEqual(acs.planCriticalAlert({ previousQty: 3, newQty: 2, critical: 2, settings: { email: 'chef@verkstad.se' } }), { criticalAlert: true });
+    assert.deepEqual(acs.planCriticalAlert({ previousQty: 3, newQty: 2, critical: 2, settings: { alertEmail: 'lager@verkstad.se' } }), { criticalAlert: true });
+    assert.deepEqual(acs.planCriticalAlert({ previousQty: 3, newQty: 2, critical: 2, settings: {} }), { criticalAlert: false });
     assert.deepEqual(acs.planCriticalAlert({ previousQty: 2, newQty: 1, critical: 2, settings: {} }), { criticalAlert: false });
   });
 
@@ -245,5 +255,71 @@ describe('applySettingsPatch', () => {
     const patch = applySettingsPatch({ smtpUser: 'verkstad@gmail.com', smtpPass: '' });
     assert.equal(patch.smtpUser, 'verkstad@gmail.com');
     assert.equal(Object.prototype.hasOwnProperty.call(patch, 'smtpPass'), false);
+  });
+
+  it('trims the alert recipient list and still clears SMTP when the username is emptied', () => {
+    const patch = applySettingsPatch({ smtpUser: '  ', alertEmail: '  lager@verkstad.se, chef@verkstad.se  ', smtpPass: 'old' });
+    assert.equal(patch.alertEmail, 'lager@verkstad.se, chef@verkstad.se');
+    assert.equal(patch.smtpPass, '');
+    assert.equal(applySettingsPatch({ alertEmail: 'x'.repeat(1200) }).alertEmail.length, 1000);
+  });
+});
+
+describe('alert recipients', () => {
+  it('uses alertEmail and falls back to the existing chef address when it is empty', () => {
+    assert.deepEqual(alertRecipients({ alertEmail: 'lager@verkstad.se, inkop@verkstad.se' }), ['lager@verkstad.se', 'inkop@verkstad.se']);
+    assert.deepEqual(alertRecipients({ alertEmail: ' lager@verkstad.se ; inkop@verkstad.se ', email: 'chef@verkstad.se' }), ['lager@verkstad.se', 'inkop@verkstad.se']);
+    assert.deepEqual(alertRecipients({ alertEmail: '', email: 'chef@verkstad.se' }), ['chef@verkstad.se']);
+    assert.deepEqual(alertRecipients({ email: 'chef@verkstad.se, lager@verkstad.se' }), ['chef@verkstad.se', 'lager@verkstad.se']);
+    assert.deepEqual(alertRecipients({ alertEmail: 'Lager@Verkstad.se, lager@verkstad.se' }), ['Lager@Verkstad.se']);
+    assert.deepEqual(alertRecipients({ alertEmail: 'inte-en-adress', email: 'chef@verkstad.se' }), []);
+    assert.deepEqual(alertRecipients({}), []);
+  });
+
+  it('sends one critical mail to every alert recipient', async () => {
+    const acsBag = { connections: [], payloads: [] };
+    const mail = service({ env: acsEnv(), acsBag });
+    const settings = { alertEmail: 'lager@verkstad.se, inkop@verkstad.se', email: 'chef@verkstad.se' };
+    const decision = mail.planCriticalAlert({ previousQty: 3, newQty: 2, critical: 2, settings });
+    assert.equal(decision.criticalAlert, true);
+    const recipients = alertRecipients(settings);
+    await mail.sendTenantMail(settings, { to: recipients.join(', '), subject: '⚠️ KRITISKT: Filter', text: 'varning' });
+    assert.deepEqual(acsBag.payloads[0].recipients.to.map(r => r.address), recipients);
+    assert.equal(JSON.stringify(acsBag.payloads[0]).includes('chef@verkstad.se'), false);
+  });
+
+  it('rejects a test send with a bad address and accepts comma-separated recipients', () => {
+    const saved = { alertEmail: '', email: 'chef@verkstad.se' };
+    assert.deepEqual(resolveTestRecipients(saved), { recipients: ['chef@verkstad.se'] });
+    assert.deepEqual(resolveTestRecipients(saved, 'lager@verkstad.se, inkop@verkstad.se'), { recipients: ['lager@verkstad.se', 'inkop@verkstad.se'] });
+    assert.equal(resolveTestRecipients(saved, 'lager@verkstad.se, nej').error, 'Ogiltig e-postadress för lagerlarm');
+    assert.equal(resolveTestRecipients({}).error, 'Ange en e-postadress för lagerlarm');
+    const many = Array.from({ length: 11 }, (_, i) => `a${i}@verkstad.se`).join(', ');
+    assert.equal(resolveTestRecipients(saved, many).error, 'Högst 10 mottagare per testmejl');
+  });
+});
+
+describe('test alert rate limit', () => {
+  it('allows five calls per tenant inside the window and then blocks', () => {
+    let now = 1_000_000;
+    const allow = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 5, now: () => now });
+    for (let i = 0; i < 5; i++) assert.equal(allow('tenant-a'), true);
+    assert.equal(allow('tenant-a'), false);
+    assert.equal(allow('tenant-b'), true);
+    now += 15 * 60 * 1000;
+    assert.equal(allow('tenant-a'), true);
+  });
+});
+
+describe('safeErrorMessage', () => {
+  it('removes connection strings, access keys and passwords', () => {
+    const msg = safeErrorMessage(
+      new Error(`auth failed ${CONNECTION} accesskey=another-secret pass=app-password-value`),
+      ['app-password-value', CONNECTION]
+    );
+    assert.equal(msg.includes('super-secret-value'), false);
+    assert.equal(msg.includes('another-secret'), false);
+    assert.equal(msg.includes('app-password-value'), false);
+    assert.match(msg, /auth failed/);
   });
 });
