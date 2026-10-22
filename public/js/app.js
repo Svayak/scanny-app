@@ -854,16 +854,9 @@ function renderSettings() {
     }
   }
 
-  // Visa om SMTP är konfigurerat via miljövariabler
-  const envNotice  = document.getElementById('smtp-env-notice');
-  const smtpFields = document.getElementById('smtp-fields');
-  if (s.smtpFromEnv) {
-    if (envNotice)  envNotice.style.display = 'block';
-    if (smtpFields) smtpFields.querySelectorAll('input').forEach(i => { i.disabled = true; i.style.opacity = '.5'; });
-  } else {
-    if (envNotice)  envNotice.style.display = 'none';
-    if (smtpFields) smtpFields.querySelectorAll('input').forEach(i => { i.disabled = false; i.style.opacity = ''; });
-  }
+  // Central avsändare: tom SMTP betyder att Scanny skickar från noreply@scanny.se
+  const envNotice = document.getElementById('smtp-env-notice');
+  if (envNotice) envNotice.style.display = (s.smtpCentral && !String(s.smtpUser || '').trim()) ? 'block' : 'none';
 }
 
 function renderAll() {

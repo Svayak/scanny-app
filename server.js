@@ -3,7 +3,6 @@ const express    = require('express');
 const mongoose   = require('mongoose');
 const bcrypt     = require('bcryptjs');
 const jwt        = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
 const path       = require('path');
 const cors       = require('cors');
 
@@ -11,6 +10,7 @@ const helmet = require('helmet');
 const mongoSanitize = require('express-mongo-sanitize');
 const rateLimit = require('express-rate-limit');
 const { Tenant, User, Product, Order, Vehicle, Log, InventoryReport } = require('./models');
+const mail = require('./mail');
 const ALLOWED_ORIGINS = ['https://scanny.se', 'https://www.scanny.se', 'http://localhost:3001'];
 const { authMiddleware, adminOnly, JWT_SECRET } = require('./auth');
 // Etikettmodulen kräver bwip-js + sharp (valfria beroenden). Ladda skyddat så att
@@ -167,34 +167,14 @@ function escHtml(v) {
   return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-// Cachad, poolad SMTP-transporter per unik SMTP-konfiguration (återanvänds mellan anrop)
-const transporterCache = new Map();
-function getTransporter(s) {
-  const host = s.smtpHost || 'smtp.gmail.com';
-  const port = s.smtpPort || 587;
-  const key = `${host}:${port}:${s.smtpUser}:${s.smtpPass}`;
-  let tr = transporterCache.get(key);
-  if (!tr) {
-    tr = nodemailer.createTransport({
-      host, port, secure: false,
-      pool: true, maxConnections: 3, maxMessages: 100,
-      auth: { user: s.smtpUser, pass: s.smtpPass }
-    });
-    transporterCache.set(key, tr);
-  }
-  return tr;
-}
-
 async function sendOrderEmail(settings, pendingOrders) {
-  const { email, workshop, smtpUser, smtpPass } = settings;
-  if (!smtpUser || !smtpPass) throw new Error('SMTP-uppgifter saknas');
-  const transporter = getTransporter(settings);
+  const { email, workshop } = settings;
   const today = new Date().toLocaleDateString('sv-SE');
   const lines = pendingOrders.map((o, i) =>
     `${i+1}. ${o.name}\n   Antal: ${o.orderQty} st\n   Art.nr/info: ${o.supplier || '—'}\n   Streckkod: ${o.code}`
   ).join('\n\n');
-  await transporter.sendMail({
-    from: `"Scanny" <${smtpUser}>`, to: email,
+  await mail.sendTenantMail(settings, {
+    to: email,
     subject: `Beställningsorder — ${workshop} ${today}`,
     text: `Hej,\n\nFöljande artiklar behöver beställas till ${workshop}:\n\n${lines}\n\nTotalt ${pendingOrders.length} artikel${pendingOrders.length > 1 ? 'er' : ''} att beställa.\n\nVänliga hälsningar,\nScanny — ${workshop}`
   });
@@ -426,19 +406,24 @@ app.post('/api/scan', authMiddleware, checkTenantActive, requirePermission('scan
         orderCreated = true;
       }
     }
-    if (p.qty <= p.critical) {
+    let criticalAlert = false;
+    const previousQty = p.qty + 1;
+    if (mail.crossedCriticalThreshold(previousQty, p.qty, p.critical)) {
       const tc = await Tenant.findById(req.tenantId);
-      if (tc?.settings?.smtpUser && tc?.settings?.smtpPass) {
+      const decision = mail.planCriticalAlert({
+        previousQty, newQty: p.qty, critical: p.critical, settings: tc?.settings
+      });
+      criticalAlert = decision.criticalAlert;
+      if (criticalAlert) {
         const s = tc.settings;
-        const tr = getTransporter(s);
         const now = new Date().toLocaleString('sv-SE');
         const text = `KRITISK LAGERVARNING — ${s.workshop}\n${now}\n\nProdukten "${p.name}" har nått kritisk lagernivå!\n\n  Aktuellt antal:    ${p.qty} st\n  Kritisk nivå:      ${p.critical} st\n  Artikelnummer:  ${p.articleNo||'—'}\n  Leverantör:       ${p.supplier||'—'}\n  Streckkod:        ${p.code}\n\nÅtgärd krävs omgående!\n\nVänliga hälsningar,\nScanny — ${s.workshop}`;
-        tr.sendMail({ from: `"Scanny" <${s.smtpUser}>`, to: s.email, subject: `⚠️ KRITISKT: ${p.name} — ${s.workshop}`, text })
+        mail.sendTenantMail(s, { to: s.email, subject: `⚠️ KRITISKT: ${p.name} — ${s.workshop}`, text })
           .then(() => addLog(req.tenantId, `KRITISK — e-post skickad: ${p.name}`, 'order'))
           .catch(err => addLog(req.tenantId, `E-post misslyckades: ${err.message}`, 'warn'));
       }
     }
-    res.json({ product: p, orderCreated });
+    res.json({ product: p, orderCreated, criticalAlert });
   } catch (err) { serverError(res, err); }
 });
 
@@ -518,13 +503,12 @@ app.post('/api/inventory-report', authMiddleware, checkTenantActive, requirePerm
       entries
     }).catch(() => {});
     const tenant = await Tenant.findById(req.tenantId);
-    if (!tenant?.settings?.smtpUser) return res.json({ ok: true, sent: false });
-    const s = tenant.settings;
-    const transporter = getTransporter(s);
+    const s = tenant?.settings || {};
+    if (!mail.resolveSender(s) && !s.smtpUser) return res.json({ ok: true, sent: false });
     const now = new Date().toLocaleString('sv-SE');
     const diffRows = diffs.map(e => { const d = e.scanned-e.previous; return `  ${d>0?'↑':'↓'} ${e.name}: System ${e.previous} → Räknat ${e.scanned} (${d>0?'+':''}${d})`; }).join('\n');
     const okRows = entries.filter(e => e.scanned===e.previous).map(e => `  ✓ ${e.name}: ${e.scanned} st`).join('\n');
-    await transporter.sendMail({ from: `"Scanny" <${s.smtpUser}>`, to: s.email, subject: `Inventeringsrapport — ${s.workshop} ${now}`, text: `Inventeringsrapport — ${s.workshop}\n${now}\n\nTotalt: ${entries.length} artiklar\nMed differens: ${diffs.length}\n\n${diffs.length>0?`DIFFERENSER\n${diffRows}\n\n`:''}UTAN DIFFERENS\n${okRows||'  (inga)'}\n\nVänliga hälsningar,\nScanny` });
+    await mail.sendTenantMail(s, { to: s.email, subject: `Inventeringsrapport — ${s.workshop} ${now}`, text: `Inventeringsrapport — ${s.workshop}\n${now}\n\nTotalt: ${entries.length} artiklar\nMed differens: ${diffs.length}\n\n${diffs.length>0?`DIFFERENSER\n${diffRows}\n\n`:''}UTAN DIFFERENS\n${okRows||'  (inga)'}\n\nVänliga hälsningar,\nScanny` }, { allowPartialSmtp: true });
     res.json({ ok: true, sent: true });
   } catch (err) { serverError(res, err); }
 });
@@ -685,16 +669,13 @@ app.patch('/api/vehicles/:id/unarchive', authMiddleware, async (req, res) => {
 app.get('/api/settings', authMiddleware, async (req, res) => {
   const tenant = await Tenant.findById(req.tenantId);
   if (!tenant) return res.status(404).json({ error: 'Tenant hittades inte' });
-  const s = { ...tenant.settings.toObject() };
-  delete s.smtpPass;
-  res.json(s);
+  res.json(mail.publicSettings(tenant.settings.toObject()));
 });
 
 app.put('/api/settings', authMiddleware, adminOnly, async (req, res) => {
   try {
     const tenant = await Tenant.findById(req.tenantId);
-    const body = { ...req.body };
-    if (!body.smtpPass) delete body.smtpPass; // behåll befintligt lösenord om fältet lämnas tomt
+    const body = mail.applySettingsPatch({ ...req.body });
     Object.assign(tenant.settings, body);
     tenant.markModified('settings');
     await tenant.save();
@@ -843,8 +824,7 @@ app.get('/api/db', authMiddleware, checkTenantActive, async (req, res) => {
       Tenant.findById(req.tenantId),
       InventoryReport.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(50)
     ]);
-    const settings = { ...tenant?.settings?.toObject() };
-    delete settings.smtpPass;
+    const settings = mail.publicSettings(tenant?.settings?.toObject());
     res.json({ products, orders, users: users.map(sanitizeUser), vehicles, logs, settings, inventoryReports,
       plan: tenant?.plan || 'bas', planLimits: planLimitsPublic(tenant), usage: { users: users.length } });
   } catch (err) { serverError(res, err); }
@@ -1025,11 +1005,8 @@ async function runScheduledOrders() {
 
     const tenants = await Tenant.find({ status: 'active' });
     for (const t of tenants) {
-      if (!planOf(t).scheduledOrders) continue; // schemalagda beställningar kräver Standard+
       const s = t.settings || {};
-      if (!s.smtpUser || !s.smtpPass || !s.scheduleTime) continue;
-      if (s.scheduleDay === undefined || s.scheduleDay === null) continue;
-      if (Number(s.scheduleDay) !== nowDay || s.scheduleTime !== nowTime) continue;
+      if (!mail.shouldSendScheduled(s, planOf(t).scheduledOrders, nowDay, nowTime)) continue;
 
       const pending = await Order.find({ tenantId: t._id, sent: false });
       if (!pending.length) { await addLog(t._id, 'Schemalagd beställning: inga aktiva beställningar att skicka'); continue; }
