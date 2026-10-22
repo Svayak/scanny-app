@@ -507,6 +507,11 @@ if (kioskLinkEl && slug) kioskLinkEl.href = '/kiosk/' + slug;
   #print-label .pl-name{font-size:10pt;font-weight:700;line-height:1.05;margin-top:1mm}
   #print-label .pl-art{font-size:7pt;color:#000;margin:0.4mm 0}
   #print-label .pl-bc{width:95%;height:13mm}
+  /* DK-11209 (62×29): keep the name inside the die-cut. Other sizes stay on the rules above. */
+  #print-label.dk11209{box-sizing:border-box;width:62mm;height:29mm;padding:2mm 3mm;display:flex;flex-direction:column;justify-content:center;align-items:center;overflow:hidden}
+  #print-label.dk11209 .pl-name{font-size:9pt;line-height:1.15;margin:0;width:100%;min-width:0;align-self:stretch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #print-label.dk11209 .pl-art{font-size:7pt;line-height:1.15;margin:0;width:100%;min-width:0;align-self:stretch;white-space:nowrap;overflow:hidden}
+  #print-label.dk11209 .pl-bc{height:12mm;min-height:0;flex:0 0 12mm}
   @media print{
     body *{visibility:hidden !important}
     #print-label,#print-label *{visibility:visible !important}

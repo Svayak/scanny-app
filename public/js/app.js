@@ -1210,6 +1210,7 @@ function renderLabel(p) {
   // Anpassa sidstorlek efter vald etikettstorlek i inställningarna
   const size = (db.settings && db.settings.labelSize) || '62x29';
   const dim = PRINT_DIMS_MM[size] || PRINT_DIMS_MM['62x29'];
+  area.classList.toggle('dk11209', size === '62x29');
   area.style.width = dim.w + 'mm';
   const dimsEl = document.getElementById('print-dims');
   if (dimsEl) dimsEl.textContent = '@page{size:' + dim.w + 'mm ' + dim.h + 'mm;margin:0}';
