@@ -13,13 +13,15 @@ const { Tenant, User, Product, Order, Vehicle, Log, InventoryReport } = require(
 const mail = require('./mail');
 const allowTestAlert = mail.createRateLimiter({ windowMs: 15 * 60 * 1000, max: 5 });
 const ALLOWED_ORIGINS = ['https://scanny.se', 'https://www.scanny.se', 'http://localhost:3001'];
-const { authMiddleware, adminOnly, JWT_SECRET } = require('./auth');
+const { authMiddleware, adminOnly, adminAuthorized, JWT_SECRET } = require('./auth');
+const redact = require('./redact');
+const { blockSensitivePaths, staticOptions } = require('./serve-policy');
 const { sendManifest } = require('./pwa');
 // Etikettmodulen kräver bwip-js + sharp (valfria beroenden). Ladda skyddat så att
 // servern startar även om de saknas i miljön (t.ex. molndrift utan skrivare).
 let generateLabelPng, printLabel;
 try { ({ generateLabelPng, printLabel } = require('./label')); }
-catch (err) { console.warn('Etikettmodul ej tillgänglig (bwip-js/sharp saknas?):', err.message); }
+catch (err) { console.warn('Etikettmodul ej tillgänglig (bwip-js/sharp saknas?):', mail.safeErrorMessage(err)); }
 
 // ── Paketnivåer (matchar priserna på landningssidan) ──
 const PLAN_LIMITS = {
@@ -80,7 +82,9 @@ app.use(helmet({
 }));
 app.use(express.json({ limit: '10kb' }));
 app.use(mongoSanitize());
+app.use(blockSensitivePaths);
 app.use(express.static(path.join(__dirname, 'public'), {
+  ...staticOptions(),
   setHeaders(res, filePath) {
     if (path.basename(filePath) === 'sw.js') res.setHeader('Cache-Control', 'no-cache');
   }
@@ -150,7 +154,7 @@ app.use('/api/', async (req, res, next) => {
 // ── MongoDB ──
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost/scanny')
   .then(() => console.log('✅  MongoDB ansluten'))
-  .catch(err => { console.error('MongoDB-fel:', err.message); process.exit(1); });
+  .catch(err => { console.error('MongoDB-fel:', mail.safeErrorMessage(err, [process.env.MONGODB_URI])); process.exit(1); });
 
 // ── Hjälpfunktioner ──
 function addLog(tenantId, msg, type = 'normal') {
@@ -165,7 +169,12 @@ function addLog(tenantId, msg, type = 'normal') {
 
 // Loggar felet internt men returnerar ett generiskt meddelande till klienten
 function serverError(res, err) {
-  console.error('[FEL]', err);
+  console.error('[FEL]', mail.safeErrorMessage(err, [
+    process.env.MONGODB_URI,
+    process.env.ACS_EMAIL_CONNECTION_STRING,
+    process.env.JWT_SECRET,
+    process.env.ADMIN_SECRET
+  ]));
   return res.status(500).json({ error: 'Internt serverfel' });
 }
 
@@ -291,15 +300,19 @@ function requirePermission(key, label) {
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   try {
+    if (!req.user?.userId) return res.status(401).json({ error: 'Inte inloggad' });
     const user = await User.findById(req.user.userId).select('-password');
     const tenant = await Tenant.findById(req.tenantId);
-    res.json({ user, tenant });
+    const settings = tenant
+      ? mail.publicSettings(tenant.settings?.toObject ? tenant.settings.toObject() : (tenant.settings || {}))
+      : null;
+    res.json(redact.publicAuthPayload(user, tenant, settings));
   } catch (err) { serverError(res, err); }
 });
 
 // Intern route — du skapar verkstäder manuellt
 app.post('/api/admin/create-tenant', async (req, res) => {
-  if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET) return res.status(403).json({ error: 'Obehörig' });
+  if (!adminAuthorized(req.headers['x-admin-secret'])) return res.status(403).json({ error: 'Obehörig' });
   try {
     const { tenantName, adminEmail, adminPassword, adminName } = req.body;
     const slug = tenantName.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now().toString(36);
@@ -383,7 +396,7 @@ app.post('/api/products/:id/print-label', authMiddleware, async (req, res) => {
     await printLabel(product, tenant?.settings || {});
     await addLog(req.tenantId, `Etikett utskriven: ${product.name}`);
     res.json({ ok: true });
-  } catch (err) { res.status(400).json({ error: err.message }); }
+  } catch (err) { res.status(400).json({ error: mail.safeErrorMessage(err) || 'Utskrift misslyckades' }); }
 });
 
 // ══════════════════════════════════════════
@@ -428,7 +441,7 @@ app.post('/api/scan', authMiddleware, checkTenantActive, requirePermission('scan
         const text = `KRITISK LAGERVARNING — ${s.workshop}\n${now}\n\nProdukten "${p.name}" har nått kritisk lagernivå!\n\n  Aktuellt antal:    ${p.qty} st\n  Kritisk nivå:      ${p.critical} st\n  Artikelnummer:  ${p.articleNo||'—'}\n  Leverantör:       ${p.supplier||'—'}\n  Streckkod:        ${p.code}\n\nÅtgärd krävs omgående!\n\nVänliga hälsningar,\nScanny — ${s.workshop}`;
         mail.sendTenantMail(s, { to: recipients.join(', '), subject: `⚠️ KRITISKT: ${p.name} — ${s.workshop}`, text })
           .then(() => addLog(req.tenantId, `KRITISK — e-post skickad: ${p.name}`, 'order'))
-          .catch(err => addLog(req.tenantId, `E-post misslyckades: ${mail.safeErrorMessage(err, [s.smtpPass])}`, 'warn'));
+          .catch(err => addLog(req.tenantId, `E-post misslyckades: ${mail.safeErrorMessage(err, [s.smtpPass, process.env.ACS_EMAIL_CONNECTION_STRING, process.env.MONGODB_URI])}`, 'warn'));
       }
     }
     res.json({ product: p, orderCreated, criticalAlert });
@@ -525,18 +538,9 @@ app.post('/api/inventory-report', authMiddleware, checkTenantActive, requirePerm
 //  ANVÄNDARE
 // ══════════════════════════════════════════
 
-// Ta bort känsliga fält och lägg till hasPin (om användaren har en PIN satt)
-function sanitizeUser(u) {
-  const o = u.toObject ? u.toObject() : { ...u };
-  o.hasPin = !!o.pin;
-  delete o.pin;
-  delete o.password;
-  return o;
-}
-
 app.get('/api/users', authMiddleware, async (req, res) => {
-  const users = await User.find({ tenantId: req.tenantId }).sort({ name: 1 });
-  res.json(users.map(sanitizeUser));
+  const users = await User.find({ tenantId: req.tenantId }).select('-password').sort({ name: 1 });
+  res.json(users.map(redact.sanitizeUser));
 });
 
 app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
@@ -591,7 +595,7 @@ app.patch('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
     }
     const user = await User.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, update, { new: true });
     if (!user) return res.status(404).json({ error: 'Användare hittades inte' });
-    res.json(sanitizeUser(user));
+    res.json(redact.sanitizeUser(user));
   } catch (err) { serverError(res, err); }
 });
 
@@ -723,7 +727,8 @@ app.post('/api/settings/test-alert', authMiddleware, adminOnly, async (req, res)
 // ══════════════════════════════════════════
 
 app.get('/api/logs', authMiddleware, async (req, res) => {
-  res.json(await Log.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(100));
+  const logs = await Log.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(100);
+  res.json(logs.map(redact.publicLog));
 });
 
 app.get('/api/inventory-reports', authMiddleware, async (req, res) => {
@@ -837,7 +842,7 @@ app.post('/api/products/import', authMiddleware, adminOnly, importLimiter, expre
         const existing = await Product.findOne({ tenantId: req.tenantId, code });
         if (existing) { Object.assign(existing, fields); await existing.save(); updated++; }
         else { await Product.create({ tenantId: req.tenantId, code, ...fields }); created++; }
-      } catch (e) { skipped++; errors.push(`Rad ${i + 1} (${code}): ${e.message}`); }
+      } catch (e) { skipped++; errors.push(`Rad ${i + 1} (${code}): ${mail.safeErrorMessage(e, [process.env.MONGODB_URI])}`); }
     }
     await addLog(req.tenantId, `CSV-import: ${created} nya, ${updated} uppdaterade, ${skipped} \u00F6verhoppade`);
     res.json({ ok: true, created, updated, skipped, errors: errors.slice(0, 20) });
@@ -853,14 +858,14 @@ app.get('/api/db', authMiddleware, checkTenantActive, async (req, res) => {
     const [products, orders, users, vehicles, logs, tenant, inventoryReports] = await Promise.all([
       Product.find({ tenantId: req.tenantId }).sort({ name: 1 }).limit(10000),
       Order.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(10000),
-      User.find({ tenantId: req.tenantId }).sort({ name: 1 }),
+      User.find({ tenantId: req.tenantId }).select('-password').sort({ name: 1 }),
       Vehicle.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(10000),
       Log.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(100),
       Tenant.findById(req.tenantId),
       InventoryReport.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(50)
     ]);
     const settings = mail.publicSettings(tenant?.settings?.toObject());
-    res.json({ products, orders, users: users.map(sanitizeUser), vehicles, logs, settings, inventoryReports,
+    res.json({ products, orders, users: users.map(redact.sanitizeUser), vehicles, logs: logs.map(redact.publicLog), settings, inventoryReports,
       plan: tenant?.plan || 'bas', planLimits: planLimitsPublic(tenant), usage: { users: users.length } });
   } catch (err) { serverError(res, err); }
 });
@@ -868,8 +873,7 @@ app.get('/api/db', authMiddleware, checkTenantActive, async (req, res) => {
 // ── Superadmin middleware ──
 app.use('/api/superadmin/', superadminLimiter);
 function superAdmin(req, res, next) {
-  const secret = req.headers['x-admin-secret'];
-  if (secret !== process.env.ADMIN_SECRET) {
+  if (!adminAuthorized(req.headers['x-admin-secret'])) {
     console.warn(`[SECURITY] Obehörig superadmin-åtkomst från ${req.ip} till ${req.path}`);
     return res.status(403).json({ error: 'Obehörig' });
   }
@@ -889,7 +893,9 @@ app.get('/api/superadmin/tenants', superAdmin, async (req, res) => {
       const userCount    = await User.countDocuments({ tenantId: t._id });
       const productCount = await Product.countDocuments({ tenantId: t._id });
       const adminUser    = await User.findOne({ tenantId: t._id, role: 'admin' }).select('email name');
-      return { ...t.toObject(), userCount, productCount, adminEmail: adminUser?.email, adminName: adminUser?.name };
+      return redact.publicSuperadminTenant(t, {
+        userCount, productCount, adminEmail: adminUser?.email, adminName: adminUser?.name
+      });
     }));
     res.json(result);
   } catch (err) { serverError(res, err); }
@@ -1051,11 +1057,12 @@ async function runScheduledOrders() {
         await Order.updateMany({ tenantId: t._id, sent: false }, { sent: true });
         await addLog(t._id, `Schemalagd beställning skickad (${pending.length} artiklar)`, 'order');
       } catch (err) {
-        await addLog(t._id, `Schemalagd beställning misslyckades: ${err.message}`, 'warn');
+        const detail = mail.safeErrorMessage(err, [s.smtpPass, process.env.ACS_EMAIL_CONNECTION_STRING, process.env.MONGODB_URI]);
+        await addLog(t._id, `Schemalagd beställning misslyckades: ${detail}`, 'warn');
       }
     }
   } catch (err) {
-    console.error('[SCHEMALÄGGARE] fel:', err.message);
+    console.error('[SCHEMALÄGGARE] fel:', mail.safeErrorMessage(err, [process.env.MONGODB_URI, process.env.ACS_EMAIL_CONNECTION_STRING]));
   }
 }
 setInterval(runScheduledOrders, 60 * 1000);

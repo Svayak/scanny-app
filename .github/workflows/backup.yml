@@ -5,10 +5,15 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Install mongodump
         run: |
           wget -qO - https://www.mongodb.org/static/pgp/server-6.0.asc | sudo apt-key add -
@@ -17,17 +22,26 @@ jobs:
           sudo apt-get install -y mongodb-database-tools
 
       - name: Run backup
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
         run: |
+          set -euo pipefail
           DATE=$(date +%Y-%m-%d)
-          mongodump --uri="${{ secrets.MONGODB_URI }}" --archive=backup-$DATE.gz --gzip
+          errfile=$(mktemp)
+          set +e
+          mongodump --uri="$MONGODB_URI" --archive="backup-$DATE.gz" --gzip 2>"$errfile"
+          code=$?
+          set -e
+          node scripts/scrub-stream.js "$errfile" "$code"
 
       - name: Upload to Azure Blob Storage
         uses: azure/CLI@v2
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         with:
           inlineScript: |
             DATE=$(date +%Y-%m-%d)
             az storage blob upload \
-              --connection-string "${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}" \
               --container-name backups \
-              --name backup-$DATE.gz \
-              --file backup-$DATE.gz
+              --name "backup-$DATE.gz" \
+              --file "backup-$DATE.gz"

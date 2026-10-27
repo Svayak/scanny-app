@@ -1,7 +1,16 @@
 node_modules/
 .env
+.env.*
+!.env.example
 data/
 *.pem
+*.key
+*.p12
+*.pfx
+*.map
+id_rsa
+id_rsa.pub
+credentials.json
 *.log
 .DS_Store
 **/.DS_Store
