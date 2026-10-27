@@ -18,8 +18,58 @@ jobs:
 
       - name: Run backup
         run: |
+          # Cosmos DB (mongocluster.cosmos.azure.com:10260, northeurope) tappar
+          # ibland SCRAM-SHA-256-handskakningen: "incomplete read of message
+          # header: context deadline exceeded" / "i/o timeout". mongodump har
+          # 3 sekunders --dialTimeout som standard, vilket är för kort för en
+          # transatlantisk handskakning. Flera parallella anslutningar gör det
+          # värre, så vi väntar 30 sekunder på uppkopplingen, dumpar en
+          # kollektion i taget och försöker igen. En ofullständig arkivfil tas
+          # bort före varje försök så att en omkörning inte laddar upp en
+          # trasig dump.
           DATE=$(date +%Y-%m-%d)
-          mongodump --uri="${{ secrets.MONGODB_URI }}" --archive=backup-$DATE.gz --gzip
+          ARCHIVE="backup-$DATE.gz"
+          MAX_ATTEMPTS=5
+          attempt=1
+
+          while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
+            rm -f "$ARCHIVE"
+            echo "mongodump attempt ${attempt}/${MAX_ATTEMPTS}"
+            set +e
+            mongodump \
+              --uri="${{ secrets.MONGODB_URI }}" \
+              --archive="$ARCHIVE" \
+              --gzip \
+              --numParallelCollections=1 \
+              --dialTimeout=30
+            status=$?
+            set -e
+
+            if [ "$status" -eq 0 ] && [ ! -s "$ARCHIVE" ]; then
+              echo "mongodump exited 0 but ${ARCHIVE} is missing or empty"
+              status=1
+            fi
+
+            if [ "$status" -eq 0 ]; then
+              echo "mongodump succeeded on attempt ${attempt}"
+              exit 0
+            fi
+
+            echo "mongodump failed on attempt ${attempt} (exit ${status})"
+            rm -f "$ARCHIVE"
+            if [ "$attempt" -eq "$MAX_ATTEMPTS" ]; then
+              echo "Giving up after ${MAX_ATTEMPTS} attempts"
+              exit "$status"
+            fi
+
+            # 15s, 30s, 60s, 120s
+            delay=$((15 << (attempt - 1)))
+            echo "Waiting ${delay}s before retry"
+            sleep "$delay"
+            attempt=$((attempt + 1))
+          done
+
+          exit 1
 
       - name: Upload to Azure Blob Storage
         uses: azure/CLI@v2
@@ -30,4 +80,5 @@ jobs:
               --connection-string "${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}" \
               --container-name backups \
               --name backup-$DATE.gz \
-              --file backup-$DATE.gz
+              --file backup-$DATE.gz \
+              --overwrite=true
