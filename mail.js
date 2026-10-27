@@ -1,3 +1,5 @@
+const { redactText, stripSensitive } = require('./redact');
+
 const DISPLAY_NAME = 'Scanny';
 
 // Tomt användarnamn betyder "använd central avsändare" och får inte lämna kvar ett gammalt lösenord.
@@ -85,11 +87,7 @@ function createRateLimiter({ windowMs, max, now = () => Date.now() } = {}) {
 }
 
 function safeErrorMessage(err, secrets = []) {
-  let msg = scrubSecrets(err && err.message ? err.message : err, '');
-  for (const secret of secrets) {
-    const value = String(secret || '');
-    if (value.length >= 8) msg = msg.split(value).join('***');
-  }
+  const msg = redactText(err && err.message ? err.message : err, secrets);
   return msg.slice(0, 300);
 }
 
@@ -102,9 +100,7 @@ function crossedCriticalThreshold(previousQty, newQty, critical) {
 }
 
 function scrubSecrets(value, connectionString) {
-  let msg = String(value ?? '');
-  if (connectionString) msg = msg.split(connectionString).join('***');
-  return msg.replace(/accesskey=[^;\s'"]+/gi, 'accesskey=***');
+  return redactText(value, connectionString ? [connectionString] : []);
 }
 
 function createMailService(overrides = {}) {
@@ -230,7 +226,7 @@ function createMailService(overrides = {}) {
   }
 
   function publicSettings(settingsObject) {
-    const s = { ...(settingsObject || {}) };
+    const s = stripSensitive({ ...(settingsObject || {}) });
     delete s.smtpPass;
     s.smtpCentral = smtpCentral();
     return s;

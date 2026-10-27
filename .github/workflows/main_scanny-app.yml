@@ -29,6 +29,16 @@ jobs:
           npm run build --if-present
           npm run test --if-present
 
+      - name: Strip secret files before packaging
+        run: |
+          set -euo pipefail
+          find . -path ./node_modules -prune -o -path ./.git -prune -o -type f \( \
+            -name '.env' -o -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' -o \
+            -name '*.map' -o -name 'credentials.json' -o -name 'id_rsa' -o -name 'id_rsa.pub' \
+          \) -delete
+          find . -path ./node_modules -prune -o -path ./.git -prune -o -type f -name '.env.*' ! -name '.env.example' -delete
+          rm -rf .git test
+
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
@@ -37,6 +47,7 @@ jobs:
           # dagars default fyllde kontots delade lagringskvot och stoppade
           # bygget i ett annat repo.
           retention-days: 1
+          include-hidden-files: false
           path: .
 
   deploy:
