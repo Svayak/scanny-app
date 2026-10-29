@@ -10,16 +10,15 @@ permissions:
 
 jobs:
   backup:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, box]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install mongodump
+      # mongodump och az är förinstallerade på box-runnern (~/.local/bin).
+      - name: Check tools
         run: |
-          wget -qO - https://www.mongodb.org/static/pgp/server-6.0.asc | sudo apt-key add -
-          echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/6.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-6.0.list
-          sudo apt-get update
-          sudo apt-get install -y mongodb-database-tools
+          mongodump --version | head -1
+          az version --output tsv | head -1
 
       - name: Run backup
         env:
@@ -29,19 +28,26 @@ jobs:
           DATE=$(date +%Y-%m-%d)
           errfile=$(mktemp)
           set +e
-          mongodump --uri="$MONGODB_URI" --archive="backup-$DATE.gz" --gzip 2>"$errfile"
+          mongodump --uri="$MONGODB_URI" --archive="backup-$DATE.gz" --gzip --dialTimeout=30 --numParallelCollections=1 2>"$errfile"
           code=$?
           set -e
           node scripts/scrub-stream.js "$errfile" "$code"
 
+      # azure/CLI@v2 kör az i en Docker-container; box-runnern har inte Docker,
+      # så az (förinstallerad) körs direkt. Ingen az login behövs med connection string.
       - name: Upload to Azure Blob Storage
-        uses: azure/CLI@v2
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
-        with:
-          inlineScript: |
-            DATE=$(date +%Y-%m-%d)
-            az storage blob upload \
-              --container-name backups \
-              --name "backup-$DATE.gz" \
-              --file "backup-$DATE.gz"
+        run: |
+          set -euo pipefail
+          DATE=$(date +%Y-%m-%d)
+          az storage blob upload \
+            --container-name backups \
+            --name "backup-$DATE.gz" \
+            --file "backup-$DATE.gz" \
+            --only-show-errors
+
+      # Self-hosted workspace återanvänds mellan körningar: radera dumpen lokalt.
+      - name: Remove local dump
+        if: always()
+        run: rm -f backup-*.gz

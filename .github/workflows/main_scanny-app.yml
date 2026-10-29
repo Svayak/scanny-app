@@ -7,11 +7,12 @@ on:
   push:
     branches:
       - main
+  pull_request:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, box]
     permissions:
       contents: read #This is required for actions/checkout
 
@@ -35,8 +36,8 @@ jobs:
           find . -path ./node_modules -prune -o -path ./.git -prune -o -type f \( \
             -name '.env' -o -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' -o \
             -name '*.map' -o -name 'credentials.json' -o -name 'id_rsa' -o -name 'id_rsa.pub' \
-          \) -delete
-          find . -path ./node_modules -prune -o -path ./.git -prune -o -type f -name '.env.*' ! -name '.env.example' -delete
+          \) -exec rm -f {} +
+          find . -path ./node_modules -prune -o -path ./.git -prune -o -type f -name '.env.*' ! -name '.env.example' -exec rm -f {} +
           rm -rf .git test
 
       - name: Upload artifact for deployment job
@@ -51,8 +52,10 @@ jobs:
           path: .
 
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, box]
     needs: build
+    # PR-körningar bygger och testar bara. Deploy endast från main.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     permissions:
       id-token: write #This is required for requesting the JWT
       contents: read #This is required for actions/checkout
