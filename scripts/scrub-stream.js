@@ -6,7 +6,7 @@ const { redactText } = require('../redact');
 
 const file = process.argv[2];
 const code = Number(process.argv[3] || 0);
-const known = [process.env.MONGODB_URI, process.env.AZURE_STORAGE_CONNECTION_STRING, process.env.ACS_EMAIL_CONNECTION_STRING]
+const known = [process.env.MONGODB_URI, process.env.AZURE_STORAGE_CONNECTION_STRING, process.env.ACS_EMAIL_CONNECTION_STRING, process.env.SMTP_PASSWORD]
   .filter(Boolean);
 let msg = '';
 try {

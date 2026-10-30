@@ -538,7 +538,7 @@ describe('manual printing stays unchanged', () => {
     await printLabel(product, tenant?.settings || {});
     await addLog(req.tenantId, \`Etikett utskriven: \${product.name}\`);
     res.json({ ok: true });
-  } catch (err) { res.status(400).json({ error: mail.safeErrorMessage(err) || 'Utskrift misslyckades' }); }
+  } catch (err) { res.status(400).json({ error: mail.safeErrorMessage(err, [process.env.SMTP_PASSWORD]) || 'Utskrift misslyckades' }); }
 });`;
     assert.equal(server.includes(preview), true);
     assert.equal(server.includes(browserPrint), true);

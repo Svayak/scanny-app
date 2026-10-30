@@ -9,6 +9,7 @@ const cors       = require('cors');
 const helmet = require('helmet');
 const mongoSanitize = require('express-mongo-sanitize');
 const rateLimit = require('express-rate-limit');
+const { clientIp, rateLimitKey } = require('./client-ip');
 const { Tenant, User, Product, Order, Vehicle, Log, InventoryReport, PrintJob } = require('./models');
 const mail = require('./mail');
 const allowTestAlert = mail.createRateLimiter({ windowMs: 15 * 60 * 1000, max: 5 });
@@ -21,7 +22,7 @@ const { sendManifest } = require('./pwa');
 // servern startar även om de saknas i miljön (t.ex. molndrift utan skrivare).
 let generateLabelPng, printLabel;
 try { ({ generateLabelPng, printLabel } = require('./label')); }
-catch (err) { console.warn('Etikettmodul ej tillgänglig (bwip-js/sharp saknas?):', mail.safeErrorMessage(err)); }
+catch (err) { console.warn('Etikettmodul ej tillgänglig (bwip-js/sharp saknas?):', mail.safeErrorMessage(err, [process.env.SMTP_PASSWORD])); }
 const { createPrintFeature, respondPrintError } = require('./print-api');
 
 // ── Paketnivåer (matchar priserna på landningssidan) ──
@@ -39,6 +40,9 @@ function planLimitsPublic(tenant) {
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
+// En hop: Azure App Service. Utan detta loggar express-rate-limit
+// ERR_ERL_UNEXPECTED_X_FORWARDED_FOR och nycklar på proxyn i stället för klienten.
+app.set('trust proxy', 1);
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -93,8 +97,9 @@ app.use(express.static(path.join(__dirname, 'public'), {
 
 // ── Rate limiting ──
 const loginLimiter = rateLimit({
+  keyGenerator: rateLimitKey,
   handler: (req, res) => {
-    console.warn(`[SECURITY] Rate limit: för många inloggningsförsök från ${req.ip}`);
+    console.warn(`[SECURITY] Rate limit: för många inloggningsförsök från ${clientIp(req)}`);
     res.status(429).json({ error: 'För många inloggningsförsök. Försök igen om 15 minuter.' });
   },
   windowMs: 15 * 60 * 1000, // 15 minuter
@@ -105,6 +110,7 @@ const loginLimiter = rateLimit({
 });
 
 const apiLimiter = rateLimit({
+  keyGenerator: rateLimitKey,
   windowMs: 60 * 1000, // 1 minut
   max: 200, // max 200 anrop per minut per IP
   message: { error: 'För många anrop. Försök igen om en stund.' },
@@ -113,6 +119,7 @@ const apiLimiter = rateLimit({
 });
 
 const kioskLimiter = rateLimit({
+  keyGenerator: rateLimitKey,
   windowMs: 60 * 1000, // 1 minut
   max: 20, // max 20 token-förfrågningar per IP
   message: { error: 'För många försök. Försök igen om en stund.' },
@@ -122,13 +129,15 @@ const kioskLimiter = rateLimit({
 
 // Striktare gräns för superadmin (skyddar x-admin-secret mot brute force)
 const superadminLimiter = rateLimit({
+  keyGenerator: rateLimitKey,
   windowMs: 15 * 60 * 1000, max: 30,
-  handler: (req, res) => { console.warn(`[SECURITY] Rate limit superadmin från ${req.ip}`); res.status(429).json({ error: 'För många försök.' }); },
+  handler: (req, res) => { console.warn(`[SECURITY] Rate limit superadmin från ${clientIp(req)}`); res.status(429).json({ error: 'För många försök.' }); },
   standardHeaders: true, legacyHeaders: false,
 });
 
 // Gräns för CSV-import (resurskrävande)
 const importLimiter = rateLimit({
+  keyGenerator: rateLimitKey,
   windowMs: 60 * 60 * 1000, max: 20,
   message: { error: 'För många importer. Försök igen senare.' },
   standardHeaders: true, legacyHeaders: false,
@@ -155,7 +164,7 @@ app.use('/api/', async (req, res, next) => {
 // ── MongoDB ──
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost/scanny')
   .then(() => console.log('✅  MongoDB ansluten'))
-  .catch(err => { console.error('MongoDB-fel:', mail.safeErrorMessage(err, [process.env.MONGODB_URI])); process.exit(1); });
+  .catch(err => { console.error('MongoDB-fel:', mail.safeErrorMessage(err, [process.env.MONGODB_URI, process.env.SMTP_PASSWORD])); process.exit(1); });
 
 // ── Hjälpfunktioner ──
 function addLog(tenantId, msg, type = 'normal') {
@@ -176,6 +185,7 @@ function serverError(res, err) {
   console.error('[FEL]', mail.safeErrorMessage(err, [
     process.env.MONGODB_URI,
     process.env.ACS_EMAIL_CONNECTION_STRING,
+    process.env.SMTP_PASSWORD,
     process.env.JWT_SECRET,
     process.env.ADMIN_SECRET
   ]));
@@ -413,7 +423,7 @@ app.post('/api/products/:id/print-label', authMiddleware, async (req, res) => {
     await printLabel(product, tenant?.settings || {});
     await addLog(req.tenantId, `Etikett utskriven: ${product.name}`);
     res.json({ ok: true });
-  } catch (err) { res.status(400).json({ error: mail.safeErrorMessage(err) || 'Utskrift misslyckades' }); }
+  } catch (err) { res.status(400).json({ error: mail.safeErrorMessage(err, [process.env.SMTP_PASSWORD]) || 'Utskrift misslyckades' }); }
 });
 
 // ══════════════════════════════════════════
@@ -458,7 +468,7 @@ app.post('/api/scan', authMiddleware, checkTenantActive, requirePermission('scan
         const text = `KRITISK LAGERVARNING — ${s.workshop}\n${now}\n\nProdukten "${p.name}" har nått kritisk lagernivå!\n\n  Aktuellt antal:    ${p.qty} st\n  Kritisk nivå:      ${p.critical} st\n  Artikelnummer:  ${p.articleNo||'—'}\n  Leverantör:       ${p.supplier||'—'}\n  Streckkod:        ${p.code}\n\nÅtgärd krävs omgående!\n\nVänliga hälsningar,\nScanny — ${s.workshop}`;
         mail.sendTenantMail(s, { to: recipients.join(', '), subject: `⚠️ KRITISKT: ${p.name} — ${s.workshop}`, text })
           .then(() => addLog(req.tenantId, `KRITISK — e-post skickad: ${p.name}`, 'order'))
-          .catch(err => addLog(req.tenantId, `E-post misslyckades: ${mail.safeErrorMessage(err, [s.smtpPass, process.env.ACS_EMAIL_CONNECTION_STRING, process.env.MONGODB_URI])}`, 'warn'));
+          .catch(err => addLog(req.tenantId, `E-post misslyckades: ${mail.safeErrorMessage(err, [s.smtpPass, process.env.SMTP_PASSWORD, process.env.ACS_EMAIL_CONNECTION_STRING, process.env.MONGODB_URI])}`, 'warn'));
       }
     }
     res.json({ product: p, orderCreated, criticalAlert });
@@ -480,10 +490,10 @@ app.post('/api/add', authMiddleware, checkTenantActive, requirePermission('add',
     // Ett fel i kön får inte ändra inleveransen.
     try {
       Promise.resolve(printing.enqueueForGoodsReceipt(req.tenantId, p)).catch(err => {
-        console.warn('[print] Kunde inte köa etikett vid inleverans:', mail.safeErrorMessage(err));
+        console.warn('[print] Kunde inte köa etikett vid inleverans:', mail.safeErrorMessage(err, [process.env.SMTP_PASSWORD]));
       });
     } catch (err) {
-      console.warn('[print] Kunde inte köa etikett vid inleverans:', mail.safeErrorMessage(err));
+      console.warn('[print] Kunde inte köa etikett vid inleverans:', mail.safeErrorMessage(err, [process.env.SMTP_PASSWORD]));
     }
     res.json({ product: p });
   } catch (err) { serverError(res, err); }
@@ -742,7 +752,8 @@ app.post('/api/settings/test-alert', authMiddleware, adminOnly, async (req, res)
     smtpPass = s.smtpPass || '';
     const decision = mail.resolveTestRecipients(s, req.body?.to);
     if (decision.error) return res.status(400).json({ error: decision.error });
-    if (!mail.resolveSender(s)) return res.status(400).json({ error: 'Ingen avsändare är konfigurerad' });
+    const channel = mail.senderChannel(s);
+    if (!channel) return res.status(400).json({ error: 'Ingen avsändare är konfigurerad' });
     if (!allowTestAlert(String(req.tenantId))) {
       return res.status(429).json({ error: 'För många testmejl. Försök igen om en stund.' });
     }
@@ -752,10 +763,10 @@ app.post('/api/settings/test-alert', authMiddleware, adminOnly, async (req, res)
       subject: 'Testmejl från Scanny — lagerlarm',
       text: `Det här är ett test av lagerlarm från Scanny${workshop ? ` (${workshop})` : ''}.\n\nOm du läser det här når kritiska lagervarningar den här adressen.\n\nVänliga hälsningar,\nScanny`
     });
-    await addLog(req.tenantId, 'Testmejl för lagerlarm skickat', 'order');
-    res.json({ ok: true, sent: decision.recipients.length });
+    await addLog(req.tenantId, `Testmejl för lagerlarm skickat (${channel})`, 'order');
+    res.json({ ok: true, sent: decision.recipients.length, channel });
   } catch (err) {
-    console.error('[FEL] testmejl:', mail.safeErrorMessage(err, [smtpPass, process.env.ACS_EMAIL_CONNECTION_STRING]));
+    console.error('[FEL] testmejl:', mail.safeErrorMessage(err, [smtpPass, process.env.SMTP_PASSWORD, process.env.ACS_EMAIL_CONNECTION_STRING]));
     res.status(502).json({ error: 'Kunde inte skicka testmejl' });
   }
 });
@@ -880,7 +891,7 @@ app.post('/api/products/import', authMiddleware, adminOnly, importLimiter, expre
         const existing = await Product.findOne({ tenantId: req.tenantId, code });
         if (existing) { Object.assign(existing, fields); await existing.save(); updated++; }
         else { await Product.create({ tenantId: req.tenantId, code, ...fields }); created++; }
-      } catch (e) { skipped++; errors.push(`Rad ${i + 1} (${code}): ${mail.safeErrorMessage(e, [process.env.MONGODB_URI])}`); }
+      } catch (e) { skipped++; errors.push(`Rad ${i + 1} (${code}): ${mail.safeErrorMessage(e, [process.env.MONGODB_URI, process.env.SMTP_PASSWORD])}`); }
     }
     await addLog(req.tenantId, `CSV-import: ${created} nya, ${updated} uppdaterade, ${skipped} \u00F6verhoppade`);
     res.json({ ok: true, created, updated, skipped, errors: errors.slice(0, 20) });
@@ -1095,12 +1106,12 @@ async function runScheduledOrders() {
         await Order.updateMany({ tenantId: t._id, sent: false }, { sent: true });
         await addLog(t._id, `Schemalagd beställning skickad (${pending.length} artiklar)`, 'order');
       } catch (err) {
-        const detail = mail.safeErrorMessage(err, [s.smtpPass, process.env.ACS_EMAIL_CONNECTION_STRING, process.env.MONGODB_URI]);
+        const detail = mail.safeErrorMessage(err, [s.smtpPass, process.env.SMTP_PASSWORD, process.env.ACS_EMAIL_CONNECTION_STRING, process.env.MONGODB_URI]);
         await addLog(t._id, `Schemalagd beställning misslyckades: ${detail}`, 'warn');
       }
     }
   } catch (err) {
-    console.error('[SCHEMALÄGGARE] fel:', mail.safeErrorMessage(err, [process.env.MONGODB_URI, process.env.ACS_EMAIL_CONNECTION_STRING]));
+    console.error('[SCHEMALÄGGARE] fel:', mail.safeErrorMessage(err, [process.env.MONGODB_URI, process.env.ACS_EMAIL_CONNECTION_STRING, process.env.SMTP_PASSWORD]));
   }
 }
 setInterval(runScheduledOrders, 60 * 1000);

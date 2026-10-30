@@ -1651,7 +1651,7 @@ async function sendTestAlertEmail() {
   try {
     const res = await api('POST', '/api/settings/test-alert', to ? { to } : {});
     if (!res) return;
-    const msg = 'Testmejl skickat';
+    const msg = res.channel ? `Testmejl skickat (${res.channel})` : 'Testmejl skickat';
     setTestAlertStatus(msg, true);
     toast(msg, 'success');
   } catch (err) {

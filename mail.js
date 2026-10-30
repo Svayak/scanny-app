@@ -102,19 +102,47 @@ function crossedCriticalThreshold(previousQty, newQty, critical) {
   return prev > limit && next <= limit;
 }
 
-function scrubSecrets(value, connectionString) {
-  return redactText(value, connectionString ? [connectionString] : []);
+const SMTP_AUTH_OR_CONNECTION = new Set([
+  'EAUTH', 'ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'ECONNREFUSED', 'ECONNRESET',
+  'ENOTFOUND', 'EDNS', 'EAI_AGAIN', 'ETLS', 'EPROTOCOL', 'EHOSTUNREACH', 'ENETUNREACH'
+]);
+
+function isAuthOrConnectionError(err) {
+  const code = String(err?.code || '').toUpperCase();
+  if (SMTP_AUTH_OR_CONNECTION.has(code)) return true;
+  const responseCode = Number(err?.responseCode);
+  return responseCode === 454 || responseCode === 530 || responseCode === 534 || responseCode === 535;
+}
+
+function formatMailbox(name, address) {
+  const display = String(name || '').replace(/["<>]/g, '').trim() || DISPLAY_NAME;
+  return `"${display}" <${String(address || '').trim()}>`;
 }
 
 function createMailService(overrides = {}) {
   const nodemailer = overrides.nodemailer || require('nodemailer');
   const env = overrides.env || process.env;
+  const warn = overrides.warn || (message => console.warn(message));
   const createEmailClient = overrides.createEmailClient || ((connectionString) => {
     const { EmailClient } = require('@azure/communication-email');
     return new EmailClient(connectionString);
   });
   const transporterCache = new Map();
   const clientCache = new Map();
+
+  function configuredSecrets(extra = []) {
+    return [env.SMTP_PASSWORD, env.ACS_EMAIL_CONNECTION_STRING, ...extra]
+      .map(secret => String(secret || ''))
+      .filter(secret => secret.length > 0);
+  }
+
+  // Explicit hemligheter tas bort även när de är kortare än redactText-gränsen.
+  function scrubMailText(value, extra) {
+    const secrets = configuredSecrets(extra);
+    let msg = String(value ?? '');
+    for (const secret of secrets) msg = msg.split(secret).join('***');
+    return safeErrorMessage(msg, secrets);
+  }
 
   function centralConfig() {
     const connectionString = String(env.ACS_EMAIL_CONNECTION_STRING || '').trim();
@@ -127,30 +155,73 @@ function createMailService(overrides = {}) {
     };
   }
 
-  function smtpCentral() {
-    return centralConfig() !== null;
+  // Central SMTP kräver alla tre. Saknas en faller sändningen vidare till ACS.
+  function centralSmtpConfig() {
+    const host = String(env.SMTP_HOST || '').trim();
+    const user = String(env.SMTP_USER || '').trim();
+    const pass = String(env.SMTP_PASSWORD || '').trim();
+    if (!host || !user || !pass) return null;
+    const port = Number(String(env.SMTP_PORT || '').trim()) || 587;
+    const fromAddress = String(env.EMAIL_FROM || '').trim() || user;
+    const fromName = String(env.EMAIL_FROM_NAME || '').trim() || DISPLAY_NAME;
+    return {
+      host,
+      port,
+      user,
+      pass,
+      from: formatMailbox(fromName, fromAddress),
+      replyTo: String(env.EMAIL_REPLY_TO || '').trim()
+    };
   }
 
+  function smtpCentral() {
+    return centralSmtpConfig() !== null || centralConfig() !== null;
+  }
+
+  // 1) verkstadens SMTP  2) central SMTP  3) ACS  4) ingen
   function resolveSender(settings) {
     if (settings?.smtpUser && settings?.smtpPass) return { type: 'smtp' };
+    if (centralSmtpConfig()) return { type: 'central-smtp' };
     if (centralConfig()) return { type: 'acs' };
     return null;
   }
 
+  function senderChannel(settings) {
+    const type = resolveSender(settings || {})?.type;
+    if (type === 'smtp') return 'tenant SMTP';
+    if (type === 'central-smtp') return 'central SMTP';
+    if (type === 'acs') return 'ACS';
+    return null;
+  }
+
+  function transportOptions(settings) {
+    const host = settings.host || settings.smtpHost || 'smtp.gmail.com';
+    const port = Number(settings.port ?? settings.smtpPort) || 587;
+    const user = settings.user || settings.smtpUser;
+    const pass = settings.pass ?? settings.smtpPass;
+    return {
+      host,
+      port,
+      user,
+      pass,
+      from: settings.from || `"${DISPLAY_NAME}" <${user}>`,
+      replyTo: String(settings.replyTo || '').trim()
+    };
+  }
+
   function getTransporter(settings) {
-    const host = settings.smtpHost || 'smtp.gmail.com';
-    const port = Number(settings.smtpPort) || 587;
-    const key = `${host}:${port}:${settings.smtpUser}:${settings.smtpPass}`;
+    const cfg = transportOptions(settings);
+    const key = `${cfg.host}:${cfg.port}:${cfg.user}:${cfg.pass}`;
     let tr = transporterCache.get(key);
     if (!tr) {
       tr = nodemailer.createTransport({
-        host,
-        port,
-        secure: port === 465,
+        host: cfg.host,
+        port: cfg.port,
+        secure: cfg.port === 465,
         pool: true,
         maxConnections: 3,
         maxMessages: 100,
-        auth: { user: settings.smtpUser, pass: settings.smtpPass }
+        auth: { user: cfg.user, pass: cfg.pass }
       });
       transporterCache.set(key, tr);
     }
@@ -167,13 +238,32 @@ function createMailService(overrides = {}) {
   }
 
   async function sendViaSmtp(settings, message) {
-    const transporter = getTransporter(settings);
-    await transporter.sendMail({
-      from: `"${DISPLAY_NAME}" <${settings.smtpUser}>`,
+    const cfg = transportOptions(settings);
+    const transporter = getTransporter(cfg);
+    const payload = {
+      from: cfg.from,
       to: message.to,
       subject: message.subject,
       text: message.text
-    });
+    };
+    if (cfg.replyTo) payload.replyTo = cfg.replyTo;
+    await transporter.sendMail(payload);
+  }
+
+  // Ett auth- eller anslutningsfel från central SMTP loggas avskrubbat och kastas.
+  // ACS används inte som tyst reserv — då syns felet i händelseloggen som tidigare.
+  async function sendViaCentralSmtp(message) {
+    const cfg = centralSmtpConfig();
+    if (!cfg) throw new Error('SMTP-uppgifter saknas');
+    try {
+      await sendViaSmtp(cfg, message);
+    } catch (err) {
+      const scrubbed = scrubMailText(err && err.message ? err.message : err, [cfg.pass]);
+      if (isAuthOrConnectionError(err)) {
+        warn(`[mail] Central SMTP avvisade anslutning eller inloggning: ${scrubbed}`);
+      }
+      throw new Error(scrubbed);
+    }
   }
 
   // ACS kräver att senderAddress är exakt den verifierade MailFrom-adressen.
@@ -195,17 +285,18 @@ function createMailService(overrides = {}) {
       const poller = await client.beginSend(payload);
       result = await poller.pollUntilDone();
     } catch (err) {
-      throw new Error(scrubSecrets(err && err.message ? err.message : err, cfg.connectionString));
+      throw new Error(scrubMailText(err && err.message ? err.message : err, [cfg.connectionString]));
     }
     if (!result || result.status !== 'Succeeded') {
       const detail = result?.error?.message || result?.status || 'okänt fel';
-      throw new Error(scrubSecrets(detail, cfg.connectionString));
+      throw new Error(scrubMailText(detail, [cfg.connectionString]));
     }
   }
 
   async function sendTenantMail(settings, message, options = {}) {
     const sender = resolveSender(settings || {});
     if (sender?.type === 'smtp') return sendViaSmtp(settings, message);
+    if (sender?.type === 'central-smtp') return sendViaCentralSmtp(message);
     if (sender?.type === 'acs') return sendViaAcs(message);
     // Inventeringsrapport försökte tidigare skicka även med bara användarnamn (utan lösenord).
     if (options.allowPartialSmtp && settings?.smtpUser) return sendViaSmtp(settings, message);
@@ -243,6 +334,7 @@ function createMailService(overrides = {}) {
 
   return {
     resolveSender,
+    senderChannel,
     sendTenantMail,
     planCriticalAlert,
     shouldSendScheduled,
@@ -265,6 +357,7 @@ module.exports = {
   crossedCriticalThreshold,
   createMailService,
   resolveSender: api.resolveSender,
+  senderChannel: api.senderChannel,
   sendTenantMail: api.sendTenantMail,
   planCriticalAlert: api.planCriticalAlert,
   shouldSendScheduled: api.shouldSendScheduled,

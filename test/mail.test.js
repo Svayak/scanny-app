@@ -25,7 +25,10 @@ function fakeNodemailer(bag) {
   return {
     createTransport(opts) {
       const transport = {
-        sendMail: async (msg) => { bag.sent.push({ opts, msg }); }
+        sendMail: async (msg) => {
+          if (bag.fail) throw bag.fail;
+          bag.sent.push({ opts, msg });
+        }
       };
       bag.transports.push(opts);
       return transport;
@@ -46,12 +49,27 @@ function fakeAcs(bag) {
   };
 }
 
-function service({ env = {}, nodemailerBag, acsBag } = {}) {
+function service({ env = {}, nodemailerBag, acsBag, warn } = {}) {
   return createMailService({
     env,
+    warn,
     nodemailer: fakeNodemailer(nodemailerBag || { sent: [], transports: [] }),
     createEmailClient: fakeAcs(acsBag || { connections: [], payloads: [] })
   });
+}
+
+const CENTRAL_PASSWORD = 'workspace-app-password';
+
+function centralSmtpEnv(extra = {}) {
+  return {
+    SMTP_HOST: 'smtp.gmail.com',
+    SMTP_PORT: '587',
+    SMTP_USER: 'nils@altitudmedia.se',
+    SMTP_PASSWORD: CENTRAL_PASSWORD,
+    EMAIL_FROM: 'noreply@altitudmedia.se',
+    EMAIL_FROM_NAME: 'Scanny',
+    ...extra
+  };
 }
 
 describe('resolveSender', () => {
@@ -78,6 +96,33 @@ describe('resolveSender', () => {
     assert.equal(service({ env: { ACS_EMAIL_CONNECTION_STRING: '  ', EMAIL_FROM: '  ' } }).smtpCentral(), false);
   });
 
+  it('prefers central SMTP over ACS when host, user and password are set', () => {
+    const mail = service({ env: { ...centralSmtpEnv(), ...acsEnv() } });
+    assert.deepEqual(mail.resolveSender({}), { type: 'central-smtp' });
+    assert.equal(mail.senderChannel({}), 'central SMTP');
+    assert.equal(mail.senderChannel({ smtpUser: 'verkstad@gmail.com', smtpPass: 'app-pass' }), 'tenant SMTP');
+    assert.equal(mail.smtpCentral(), true);
+    assert.deepEqual(service({ env: centralSmtpEnv() }).resolveSender({ smtpUser: 'a@b.c' }), { type: 'central-smtp' });
+  });
+
+  it('ignores a partial central SMTP config and keeps ACS', () => {
+    const base = centralSmtpEnv();
+    for (const key of ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASSWORD']) {
+      const env = { ...base, ...acsEnv() };
+      env[key] = '   ';
+      const mail = service({ env });
+      assert.deepEqual(mail.resolveSender({}), { type: 'acs' }, key);
+      assert.equal(mail.senderChannel({}), 'ACS');
+    }
+    assert.equal(service({ env: centralSmtpEnv({ SMTP_PORT: '' }) }).resolveSender({}).type, 'central-smtp');
+  });
+
+  it('reports no channel when nothing is configured', () => {
+    const mail = service();
+    assert.equal(mail.senderChannel({}), null);
+    assert.equal(mail.senderChannel({ smtpUser: 'a@b.c' }), null);
+  });
+
   it('exposes only the smtpCentral boolean and never the secret', () => {
     const mail = service({ env: acsEnv({ EMAIL_REPLY_TO: 'info@scanny.se' }) });
     const pub = mail.publicSettings({ email: 'chef@verkstad.se', smtpUser: '', smtpPass: 'stored-pass', smtpHost: 'smtp.gmail.com' });
@@ -86,6 +131,14 @@ describe('resolveSender', () => {
     assert.equal(typeof pub.smtpCentral, 'boolean');
     assert.equal(JSON.stringify(pub).includes('super-secret-value'), false);
     assert.equal(JSON.stringify(pub).includes('accesskey'), false);
+
+    const central = service({ env: centralSmtpEnv({ EMAIL_REPLY_TO: 'info@altitudmedia.se' }) });
+    const centralPub = central.publicSettings({ workshop: 'Verkstan' });
+    assert.equal(centralPub.smtpCentral, true);
+    const centralJson = JSON.stringify(centralPub);
+    assert.equal(centralJson.includes(CENTRAL_PASSWORD), false);
+    assert.equal(centralJson.includes('nils@altitudmedia.se'), false);
+    assert.equal(centralJson.includes('SMTP_PASSWORD'), false);
   });
 });
 
@@ -171,6 +224,138 @@ describe('sendTenantMail', () => {
         return true;
       }
     );
+  });
+
+  it('sends central SMTP with display name, alias From and no reply-to unless one is set', async () => {
+    const nodemailerBag = { sent: [], transports: [] };
+    const acsBag = { connections: [], payloads: [] };
+    const mail = service({ env: { ...acsEnv(), ...centralSmtpEnv({ EMAIL_REPLY_TO: '   ' }) }, nodemailerBag, acsBag });
+    await mail.sendTenantMail({ email: 'chef@verkstad.se' }, { to: 'chef@verkstad.se', subject: 'Order', text: 'hej' });
+    assert.equal(acsBag.payloads.length, 0);
+    assert.equal(acsBag.connections.length, 0);
+    assert.equal(nodemailerBag.transports.length, 1);
+    assert.equal(nodemailerBag.transports[0].host, 'smtp.gmail.com');
+    assert.equal(nodemailerBag.transports[0].port, 587);
+    assert.equal(nodemailerBag.transports[0].secure, false);
+    assert.equal(nodemailerBag.transports[0].auth.user, 'nils@altitudmedia.se');
+    assert.equal(nodemailerBag.transports[0].auth.pass, CENTRAL_PASSWORD);
+    assert.equal(nodemailerBag.sent[0].msg.from, '"Scanny" <noreply@altitudmedia.se>');
+    assert.equal(nodemailerBag.sent[0].msg.replyTo, undefined);
+    assert.equal(nodemailerBag.sent[0].msg.to, 'chef@verkstad.se');
+  });
+
+  it('uses EMAIL_FROM_NAME and EMAIL_REPLY_TO, and implicit TLS on port 465', async () => {
+    const nodemailerBag = { sent: [], transports: [] };
+    const mail = service({
+      env: centralSmtpEnv({ SMTP_PORT: '465', EMAIL_FROM_NAME: ' Altitud ', EMAIL_REPLY_TO: ' info@altitudmedia.se ' }),
+      nodemailerBag
+    });
+    await mail.sendTenantMail({}, { to: 'chef@verkstad.se', subject: 's', text: 't' });
+    assert.equal(nodemailerBag.transports[0].port, 465);
+    assert.equal(nodemailerBag.transports[0].secure, true);
+    assert.equal(nodemailerBag.sent[0].msg.from, '"Altitud" <noreply@altitudmedia.se>');
+    assert.equal(nodemailerBag.sent[0].msg.replyTo, 'info@altitudmedia.se');
+
+    const defaultName = { sent: [], transports: [] };
+    const named = service({
+      env: centralSmtpEnv({ EMAIL_FROM_NAME: '  ', SMTP_PORT: '' }),
+      nodemailerBag: defaultName
+    });
+    await named.sendTenantMail({}, { to: 'a@b.c', subject: 's', text: 't' });
+    assert.equal(defaultName.transports[0].port, 587);
+    assert.equal(defaultName.transports[0].secure, false);
+    assert.equal(defaultName.sent[0].msg.from, '"Scanny" <noreply@altitudmedia.se>');
+    assert.equal(defaultName.sent[0].msg.replyTo, undefined);
+
+    const bag = { sent: [], transports: [] };
+    const fallback = service({ env: centralSmtpEnv({ EMAIL_FROM_NAME: '', EMAIL_FROM: '' }), nodemailerBag: bag });
+    await fallback.sendTenantMail({}, { to: 'a@b.c', subject: 's', text: 't' });
+    assert.equal(bag.sent[0].msg.from, '"Scanny" <nils@altitudmedia.se>');
+    assert.equal(bag.sent[0].msg.replyTo, undefined);
+  });
+
+  it('does not fall back to ACS when central SMTP auth or connection fails, and scrubs the password', async () => {
+    const warnings = [];
+    const nodemailerBag = {
+      sent: [],
+      transports: [],
+      fail: Object.assign(new Error(`Invalid login: ${CENTRAL_PASSWORD}`), { code: 'EAUTH', responseCode: 535 })
+    };
+    const acsBag = { connections: [], payloads: [] };
+    const mail = service({
+      env: { ...centralSmtpEnv(), ...acsEnv() },
+      nodemailerBag,
+      acsBag,
+      warn: message => warnings.push(message)
+    });
+    await assert.rejects(
+      () => mail.sendTenantMail({}, { to: 'a@b.c', subject: 's', text: 't' }),
+      (err) => {
+        assert.match(err.message, /Invalid login/);
+        assert.equal(err.message.includes(CENTRAL_PASSWORD), false);
+        return true;
+      }
+    );
+    assert.equal(acsBag.connections.length, 0);
+    assert.equal(acsBag.payloads.length, 0);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /Central SMTP avvisade anslutning eller inloggning/);
+    assert.equal(warnings[0].includes(CENTRAL_PASSWORD), false);
+    assert.equal(warnings[0].includes('super-secret-value'), false);
+
+    const quiet = [];
+    const refused = service({
+      env: centralSmtpEnv(),
+      nodemailerBag: { sent: [], transports: [], fail: Object.assign(new Error(`connect ${CENTRAL_PASSWORD}`), { code: 'ECONNREFUSED' }) },
+      acsBag: { connections: [], payloads: [] },
+      warn: message => quiet.push(message)
+    });
+    await assert.rejects(() => refused.sendTenantMail({}, { to: 'a@b.c', subject: 's', text: 't' }));
+    assert.equal(quiet.length, 1);
+    assert.equal(quiet[0].includes(CENTRAL_PASSWORD), false);
+
+    const envelopeWarnings = [];
+    const envelopeBag = { connections: [], payloads: [] };
+    const envelope = service({
+      env: { ...centralSmtpEnv(), ...acsEnv() },
+      nodemailerBag: { sent: [], transports: [], fail: Object.assign(new Error(`recipient refused ${CENTRAL_PASSWORD}`), { code: 'EENVELOPE' }) },
+      acsBag: envelopeBag,
+      warn: message => envelopeWarnings.push(message)
+    });
+    await assert.rejects(
+      () => envelope.sendTenantMail({}, { to: 'a@b.c', subject: 's', text: 't' }),
+      (err) => {
+        assert.equal(err.message.includes(CENTRAL_PASSWORD), false);
+        return true;
+      }
+    );
+    assert.equal(envelopeWarnings.length, 0);
+    assert.equal(envelopeBag.connections.length, 0);
+
+    const short = 's3cret';
+    const shortWarnings = [];
+    const shortMail = service({
+      env: centralSmtpEnv({ SMTP_PASSWORD: short }),
+      nodemailerBag: { sent: [], transports: [], fail: Object.assign(new Error(`bad login ${short}`), { code: 'EAUTH' }) },
+      warn: message => shortWarnings.push(message)
+    });
+    await assert.rejects(
+      () => shortMail.sendTenantMail({}, { to: 'a@b.c', subject: 's', text: 't' }),
+      (err) => {
+        assert.equal(err.message.includes(short), false);
+        return true;
+      }
+    );
+    assert.equal(shortWarnings[0].includes(short), false);
+  });
+
+  it('keeps tenant SMTP ahead of central SMTP', async () => {
+    const nodemailerBag = { sent: [], transports: [] };
+    const mail = service({ env: { ...centralSmtpEnv(), ...acsEnv() }, nodemailerBag });
+    await mail.sendTenantMail(tenant, { to: tenant.email, subject: 'Order', text: 'hej' });
+    assert.equal(nodemailerBag.transports[0].auth.user, 'verkstad@gmail.com');
+    assert.equal(nodemailerBag.sent[0].msg.from, '"Scanny" <verkstad@gmail.com>');
+    assert.equal(nodemailerBag.sent[0].msg.replyTo, undefined);
   });
 
   it('fails when ACS reports a non-success status and strips the connection string', async () => {
@@ -314,12 +499,13 @@ describe('test alert rate limit', () => {
 describe('safeErrorMessage', () => {
   it('removes connection strings, access keys and passwords', () => {
     const msg = safeErrorMessage(
-      new Error(`auth failed ${CONNECTION} accesskey=another-secret pass=app-password-value`),
-      ['app-password-value', CONNECTION]
+      new Error(`auth failed ${CONNECTION} accesskey=another-secret pass=app-password-value smtp=${CENTRAL_PASSWORD}`),
+      ['app-password-value', CONNECTION, CENTRAL_PASSWORD]
     );
     assert.equal(msg.includes('super-secret-value'), false);
     assert.equal(msg.includes('another-secret'), false);
     assert.equal(msg.includes('app-password-value'), false);
+    assert.equal(msg.includes(CENTRAL_PASSWORD), false);
     assert.match(msg, /auth failed/);
   });
 });
