@@ -176,7 +176,7 @@ async function main() {
   }
   totals.orders.documents = orders;
 
-  console.log(APPLY ? 'Läge: apply (skriver userId)' : 'Läge: torrkörning (skriver inget)');
+  console.log(APPLY ? 'Läge: apply (skriver userId och tolkade loggfält)' : 'Läge: torrkörning (skriver inget)');
   printBucket('Händelselogg', totals.logs);
   printBucket('Fordon, uttag i historiken', totals.vehicles);
   printBucket('Inventeringsrapporter', totals.inventoryReports);
