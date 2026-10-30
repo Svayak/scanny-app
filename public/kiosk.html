@@ -41,7 +41,7 @@ input,select,textarea{font-size:16px}
 body::before{content:'';position:fixed;inset:0;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");pointer-events:none;z-index:0;opacity:.35}
 
 /* ── Skärmar ── */
-.screen{display:none;height:100vh;flex-direction:column}
+.screen{display:none;height:100vh;height:100dvh;min-height:0;flex-direction:column}
 .screen.active{display:flex}
 
 /* ── Header ── */
@@ -102,8 +102,14 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
   display:grid;
   grid-template-rows:auto minmax(0,1fr) auto auto;
   height:100vh;
+  height:100dvh;
+  min-height:0;
   padding:20px 24px 24px;
   gap:16px;
+}
+.scan-stage{
+  display:flex;flex-direction:column;gap:12px;
+  min-height:0;overflow:hidden;
 }
 
 /* Användarrad */
@@ -123,7 +129,8 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .feedback-card{
   background:var(--surface);border:3px solid var(--border);border-radius:var(--radius-lg);
   padding:28px 32px;text-align:center;transition:border-color .2s,background .2s;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;justify-content:safe center;gap:10px;
+  flex:1 1 auto;min-height:0;width:100%;overflow:hidden;
 }
 .feedback-card.ok{background:rgba(74,222,128,.08);border-color:rgba(74,222,128,.4);animation:scan-flash .18s ease}
 .feedback-card.warn{background:rgba(251,191,36,.08);border-color:rgba(251,191,36,.4)}
@@ -137,12 +144,15 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .feedback-qty.ok{color:var(--accent)}.feedback-qty.warn{color:var(--warn)}.feedback-qty.danger{color:var(--danger)}
 .feedback-qty-label{font-size:16px;color:var(--text2)}
 .feedback-msg{font-size:16px;color:var(--text2);margin-top:2px}
-.idle-icon-wrap{width:72px;height:72px;border-radius:50%;background:#f0ede8;display:flex;align-items:center;justify-content:center;margin:0 auto 12px}
+.idle-icon-wrap{width:72px;height:72px;flex:0 1 72px;min-height:0;max-height:72px;border-radius:50%;background:#f0ede8;display:flex;align-items:center;justify-content:center;margin:0;overflow:hidden}
+.idle-icon-wrap svg{width:36px;height:36px;max-width:50%;max-height:50%}
+.idle-text,.idle-hint,.feedback-name,.feedback-msg,.feedback-qty-label{flex:0 0 auto;max-width:100%}
+.feedback-icon,.feedback-qty{flex:0 1 auto;min-height:0}
 .idle-text{font-size:20px;font-weight:600;color:var(--text3)}
 .idle-hint{font-size:14px;color:var(--text3);margin-top:4px}
 
 /* Inv-panel */
-.inv-panel{background:var(--surface);border:2px solid rgba(167,139,250,.4);border-radius:var(--radius-lg);padding:20px 24px;max-height:40vh;overflow-y:auto}
+.inv-panel{background:var(--surface);border:2px solid rgba(167,139,250,.4);border-radius:var(--radius-lg);padding:20px 24px;flex:0 1 auto;min-height:0;max-height:min(40dvh,42%);overflow-y:auto}
 .inv-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
 .inv-title{font-size:16px;font-weight:700;color:#a78bfa}
 .inv-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)}
@@ -236,6 +246,44 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .vehicle-customer{font-size:12px;color:var(--text3)}
 .no-vehicle-btn{width:100%;min-height:52px;padding:14px;border:1.5px dashed var(--border);border-radius:var(--radius);background:none;font-size:16px;color:var(--text3);cursor:pointer;transition:all .12s;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
 .no-vehicle-btn:hover{border-color:var(--text3);color:var(--text2)}
+
+/* Kort skärmhöjd (surfplatta liggande): krymp ikon, luft och text så titel och underrad får plats. */
+@media (max-height:700px){
+  .scan-layout{padding:10px 16px 12px;gap:10px}
+  .scan-stage{gap:8px}
+  .user-bar{padding:6px 12px}
+  .logout-btn{min-height:44px;padding:8px 14px;font-size:15px}
+  .feedback-card{padding:10px 16px;gap:4px}
+  .idle-icon-wrap{width:44px;height:44px;flex-basis:44px;max-height:44px}
+  .idle-text{font-size:16px}
+  .idle-hint{font-size:13px;margin-top:0}
+  .feedback-icon{font-size:32px}
+  .feedback-name{font-size:20px}
+  .feedback-qty{font-size:36px}
+  .feedback-qty-label,.feedback-msg{font-size:14px}
+  .barcode-input,.keyboard-toggle{min-height:48px;padding:8px 12px}
+  .mode-btn{min-height:60px;padding:8px;font-size:15px;gap:2px}
+  .mode-btn .mode-icon{font-size:22px}
+  .mode-indicator{margin-top:6px}
+  .inv-panel{padding:10px 12px}
+  .inv-actions{margin-top:8px}
+}
+@media (max-height:560px){
+  .scan-layout{padding:8px 12px;gap:6px}
+  .scan-stage{gap:6px}
+  .feedback-card{padding:6px 12px;gap:2px}
+  .idle-icon-wrap{width:32px;height:32px;flex-basis:32px;max-height:32px}
+  .idle-text{font-size:15px}
+  .idle-hint{font-size:12px}
+  .feedback-icon{font-size:24px}
+  .feedback-name{font-size:16px}
+  .feedback-qty{font-size:28px}
+  .feedback-qty-label,.feedback-msg{font-size:13px}
+  .barcode-input,.keyboard-toggle{min-height:44px}
+  .mode-btn{min-height:48px;padding:4px 6px;font-size:14px}
+  .mode-btn .mode-icon{font-size:16px}
+  .mode-indicator{margin-top:4px}
+}
 </style>
 </head>
 <body>
@@ -304,7 +352,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
     </div>
 
     <!-- Feedback + inv-panel -->
-    <div style="display:flex;flex-direction:column;gap:12px;flex:1;overflow:hidden">
+    <div class="scan-stage">
       <div class="feedback-card" id="feedback-card" aria-live="polite">
         <div class="idle-icon-wrap">
           <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
@@ -721,7 +769,6 @@ function showVehicleModal() {
   filterVehicles();
   document.getElementById('vehicle-search').value = '';
   document.getElementById('vehicle-modal').style.display = 'flex';
-  setTimeout(() => document.getElementById('vehicle-search').focus(), 100);
 }
 
 function filterVehicles() {

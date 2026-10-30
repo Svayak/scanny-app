@@ -95,6 +95,69 @@ describe('focus policy', () => {
 
     assert.equal(scan.shouldCaptureScanKeys({ scanActive: false }), false);
   });
+
+  it('does not steal focus from the regnummer field while it is being typed in', () => {
+    const scanField = { tagName: 'INPUT', id: 'barcode-input', getClientRects: () => [{}] };
+    const reg = { tagName: 'INPUT', id: 'vehicle-search', getClientRects: () => [{}] };
+    const typing = scan.contextFromActiveElement(reg, scanField, true, true);
+    assert.equal(typing.activeIsRealTextField, true);
+    assert.equal(scan.shouldRefocusScanField(typing), false);
+    assert.equal(scan.shouldCaptureScanKeys(typing), false);
+    const visibleWithoutModalFlag = scan.contextFromActiveElement(reg, scanField, true, false);
+    assert.equal(scan.shouldRefocusScanField(visibleWithoutModalFlag), false);
+    assert.equal(scan.shouldCaptureScanKeys(visibleWithoutModalFlag), false);
+  });
+});
+
+describe('kiosk vehicle picker', () => {
+  it('opens profile selection without focusing the regnummer field', () => {
+    const html = read('public/kiosk.html');
+    const tag = html.match(/<input[^>]*id="vehicle-search"[^>]*>/);
+    assert.ok(tag, 'regnummer field missing');
+    assert.equal(tag[0].includes('autofocus'), false);
+    const start = html.indexOf('function showVehicleModal()');
+    const end = html.indexOf('function filterVehicles()');
+    assert.ok(start > 0 && end > start);
+    const src = html.slice(start, end);
+    assert.equal(/\.focus\s*\(/.test(src), false);
+
+    let focused = null;
+    const search = {
+      id: 'vehicle-search',
+      value: 'OLD',
+      focus() { focused = search; }
+    };
+    const modal = { style: { display: 'none' } };
+    const ctx = {
+      document: {
+        getElementById(id) {
+          if (id === 'vehicle-search') return search;
+          if (id === 'vehicle-modal') return modal;
+          return null;
+        },
+        activeElement: null
+      },
+      filterVehicles() {}
+    };
+    vm.runInNewContext(src + '\nshowVehicleModal();', ctx);
+    assert.equal(modal.style.display, 'flex');
+    assert.equal(search.value, '');
+    assert.equal(focused, null);
+    assert.notEqual(ctx.document.activeElement, search);
+  });
+});
+
+describe('kiosk scan card layout', () => {
+  it('lets the status card shrink on short viewports and uses the dynamic viewport', () => {
+    const html = read('public/kiosk.html');
+    assert.match(html, /height:100dvh/);
+    assert.match(html, /\.feedback-card\{[^}]*flex:1 1 auto;min-height:0/);
+    assert.match(html, /@media \(max-height:700px\)/);
+    assert.match(html, /@media \(max-height:560px\)/);
+    const input = html.match(/<input[^>]*id="barcode-input"[^>]*>/);
+    assert.ok(input);
+    assert.match(input[0], /inputmode="none"/);
+  });
 });
 
 describe('submit resolution and optimistic qty', () => {

@@ -943,8 +943,8 @@ function renderSettings() {
     alertEl.value = dedicated;
     if (alertHint) {
       alertHint.textContent = !dedicated && fallback
-        ? 'Larm går tills vidare till ' + fallback + '. Fyll i fältet för att ange en eller flera adresser, avgränsade med kommatecken.'
-        : 'En eller flera adresser, avgränsade med kommatecken. Skickas när en artikel når kritisk nivå. Lämna tomt för att använda chefens e-post.';
+        ? 'Kritiska lagerlarm går tills vidare till ' + fallback + '. Beställningar och inventeringsrapporter skickas till chefens e-post.'
+        : 'Hit skickas kritiska lagerlarm. Beställningar och inventeringsrapporter skickas till chefens e-post. Lämna tomt för att använda chefens e-post.';
     }
   }
   document.getElementById('s-workshop').value = s.workshop || '';

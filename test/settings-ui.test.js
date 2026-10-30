@@ -14,6 +14,9 @@ describe('settings UI for lagerlarm', () => {
     it(`${page} shows the recipient field and hides SMTP until requested`, () => {
       const html = read(page);
       assert.match(html, /E-post för lagerlarm/);
+      assert.match(html, /Hit skickas kritiska lagerlarm\. Beställningar och inventeringsrapporter skickas till chefens e-post\./);
+      assert.match(html, /Hit skickas beställningar och inventeringsrapporter\./);
+      assert.equal(html.includes('Används för beställningar och inventeringsrapporter.'), false);
       assert.match(html, /id="s-alert-email"/);
       assert.match(html, /Skicka testmejl/);
       assert.match(html, /Ändra avsändaradress/);
@@ -35,6 +38,7 @@ describe('settings UI for lagerlarm', () => {
     assert.match(js, /function toggleSmtpFields\(/);
     assert.match(js, /setSmtpFieldsOpen\(!!String\(s\.smtpUser \|\| ''\)\.trim\(\)\)/);
     assert.match(js, /body\.alertEmail/);
+    assert.match(js, /Hit skickas kritiska lagerlarm\. Beställningar och inventeringsrapporter skickas till chefens e-post\./);
     assert.match(js, /\/api\/settings\/test-alert/);
     assert.match(js, /smtpHost:\s+document\.getElementById\('s-host'\)\.value\.trim\(\)/);
     assert.match(js, /if \(pass\) body\.smtpPass = pass/);
