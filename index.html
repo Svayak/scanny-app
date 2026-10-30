@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Scanny</title>
-<link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/css/style.css?v=__APP_VERSION__">
 <style>
 .admin-hub{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px;margin-top:.5rem}
 .admin-tile{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 20px 24px;display:flex;flex-direction:column;align-items:center;gap:12px;cursor:pointer;transition:box-shadow .15s,transform .12s,border-color .15s;text-decoration:none;color:var(--text);user-select:none}
@@ -380,12 +380,13 @@
 <!-- ── MODAL: Okänd streckkod ── -->
 <div class="modal-overlay" id="unknown-modal" style="display:none" role="dialog" aria-modal="true">
   <div class="modal-box">
+    <div class="modal-body">
     <h2 class="modal-title">Okänd streckkod</h2>
     <p style="font-size:13px;color:#6b6860;margin-bottom:1.25rem">Kod: <span id="unknown-code-display" style="font-family:monospace;font-weight:500"></span></p>
     <input type="hidden" id="unknown-code-value">
     <div style="display:flex;flex-direction:column;gap:10px">
       <div class="form-group"><label>Produktnamn *</label><input id="unknown-name" placeholder="T.ex. Borrbit 6mm"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+      <div class="modal-grid">
         <div class="form-group"><label>Antal</label><input id="unknown-qty" type="number" value="1" min="0"></div>
         <div class="form-group"><label>Beställn.nivå</label><input id="unknown-min" type="number" value="5" min="1"></div>
         <div class="form-group"><label>Kritisk nivå</label><input id="unknown-critical" type="number" value="2" min="0"></div>
@@ -393,6 +394,7 @@
       </div>
       <div class="form-group"><label>Artikelnummer</label><input id="unknown-article" placeholder="12345"></div>
       <div class="form-group"><label>Leverantör</label><input id="unknown-supplier" placeholder="Würth"></div>
+    </div>
     </div>
     <div class="modal-actions">
       <button class="btn" style="flex:1" onclick="closeUnknownModal()">Avbryt</button>
@@ -404,12 +406,13 @@
 <!-- ── MODAL: Redigera produkt ── -->
 <div class="modal-overlay" id="edit-modal" style="display:none" role="dialog" aria-modal="true">
   <div class="modal-box">
+    <div class="modal-body">
     <h2 class="modal-title">Redigera produkt</h2>
     <input type="hidden" id="edit-id">
     <div style="display:flex;flex-direction:column;gap:10px">
       <div class="form-group"><label>Namn *</label><input id="edit-name" placeholder="Produktnamn"></div>
       <div class="form-group"><label>Streckkod *</label><input id="edit-code" placeholder="Streckkod"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+      <div class="modal-grid">
         <div class="form-group"><label>Antal</label><input id="edit-qty" type="number" min="0"></div>
         <div class="form-group"><label>Beställn.nivå</label><input id="edit-min" type="number" min="1"></div>
         <div class="form-group"><label>Kritisk nivå</label><input id="edit-critical" type="number" min="0"></div>
@@ -417,6 +420,7 @@
       </div>
       <div class="form-group"><label>Artikelnummer</label><input id="edit-article" placeholder="12345"></div>
       <div class="form-group"><label>Leverantör</label><input id="edit-supplier" placeholder="Würth"></div>
+    </div>
     </div>
     <div class="modal-actions">
       <button class="btn" style="flex:1" onclick="closeEditModal()">Avbryt</button>
@@ -428,21 +432,23 @@
 <!-- ── MODAL: Lägg till produkt ── -->
 <div class="modal-overlay" id="add-product-modal" style="display:none" role="dialog" aria-modal="true">
   <div class="modal-box" style="max-width:560px">
+    <div class="modal-body">
     <h2 class="modal-title">Lägg till produkt</h2>
     <div style="display:flex;flex-direction:column;gap:10px">
       <div class="form-group"><label>Namn *</label><input id="a-name" placeholder="Borrbit 8mm"></div>
       <div class="form-group"><label>Streckkod *</label><input id="a-code" placeholder="7312345678901"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+      <div class="modal-grid-3">
         <div class="form-group"><label>Antal</label><input id="a-qty" type="number" value="10" min="0"></div>
         <div class="form-group"><label>Beställningsnivå</label><input id="a-min" type="number" value="5" min="1"></div>
         <div class="form-group"><label>Kritisk nivå</label><input id="a-critical" type="number" value="2" min="0"></div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+      <div class="modal-grid-3">
         <div class="form-group"><label>Beställ antal</label><input id="a-order" type="number" value="10" min="1"></div>
         <div class="form-group"><label>Artikelnummer</label><input id="a-article" placeholder="12345"></div>
         <div class="form-group"><label>Leverantör</label><input id="a-supplier" placeholder="Würth"></div>
       </div>
       <div style="font-size:12px;color:var(--text3)">📋 Beställningsnivå: kö → schemalagd tid &nbsp;|&nbsp; ⚠ Kritisk nivå: direkt-mail</div>
+    </div>
     </div>
     <div class="modal-actions">
       <button class="btn" style="flex:1" onclick="closeAddProductModal()">Avbryt</button>
@@ -452,6 +458,8 @@
 </div>
 
 <script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
-<script src="/js/app.js"></script>
+<script src="/js/product-search.js?v=__APP_VERSION__"></script>
+<script src="/js/kiosk-update.js?v=__APP_VERSION__"></script>
+<script src="/js/app.js?v=__APP_VERSION__"></script>
 </body>
 </html>

@@ -65,7 +65,11 @@ const productSchema = new mongoose.Schema({
   min:       { type: Number, default: 5 },
   critical:  { type: Number, default: 2 },
   orderQty:  { type: Number, default: 10 },
-  articleNo: { type: String, default: '' },
+  articleNo: {
+    type: String,
+    default: '',
+    set(v) { return v == null ? '' : String(v).trim(); }
+  },
   supplier:  { type: String, default: '' },
   price:     { type: Number, default: 0 },   // A-pris (utpris till kund), SEK
   createdAt: { type: Date, default: Date.now }

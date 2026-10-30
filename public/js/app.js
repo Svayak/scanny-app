@@ -689,10 +689,8 @@ function renderQuickGrid() {
 }
 
 function renderLager() {
-  const q = (document.getElementById('search-input')?.value || '').toLowerCase();
-  const filtered = db.products.filter(p =>
-    p.name.toLowerCase().includes(q) || p.code.includes(q)
-  );
+  const q = document.getElementById('search-input')?.value || '';
+  const filtered = db.products.filter(p => ScannySearch.productMatches(p, q));
 
   // Metrics på lagersidan
   const lagerMetrics = document.getElementById('lager-metrics');
@@ -1699,3 +1697,4 @@ function initScanWedge() {
 loadAll();
 setInterval(loadAll, 15000);
 initScanWedge();
+if (window.ScannyUpdate) ScannyUpdate.bindModalViewport();

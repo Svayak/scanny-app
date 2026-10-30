@@ -508,10 +508,11 @@ function renderQuickGrid() {
 }
 
 function renderLager() {
-  const q = (document.getElementById('search-input')?.value || '').toLowerCase();
-  const filtered = db.products.filter(p =>
-    p.name.toLowerCase().includes(q) || p.code.includes(q)
-  );
+  const q = document.getElementById('search-input')?.value || '';
+  const match = window.ScannySearch
+    ? (p) => ScannySearch.productMatches(p, q)
+    : (p) => ['name', 'articleNo', 'code', 'supplier'].some(key => String(p[key] == null ? '' : p[key]).trim().toLowerCase().includes(String(q).trim().toLowerCase()));
+  const filtered = db.products.filter(match);
 
   // Metrics på lagersidan
   const lagerMetrics = document.getElementById('lager-metrics');
