@@ -144,7 +144,8 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .feedback-qty.ok{color:var(--accent)}.feedback-qty.warn{color:var(--warn)}.feedback-qty.danger{color:var(--danger)}
 .feedback-qty-label{font-size:16px;color:var(--text2)}
 .feedback-msg{font-size:16px;color:var(--text2);margin-top:2px}
-.idle-icon-wrap{width:72px;height:72px;flex:0 1 72px;min-height:0;max-height:72px;border-radius:50%;background:#f0ede8;display:flex;align-items:center;justify-content:center;margin:0;overflow:hidden}
+.feedback-card{container-type:size;container-name:feedback}
+.idle-icon-wrap{width:72px;flex:0 1 72px;min-height:0;min-width:0;max-height:72px;max-width:72px;aspect-ratio:1;border-radius:50%;background:#f0ede8;display:flex;align-items:center;justify-content:center;margin:0;overflow:hidden}
 .idle-icon-wrap svg{width:36px;height:36px;max-width:50%;max-height:50%}
 .idle-text,.idle-hint,.feedback-name,.feedback-msg,.feedback-qty-label{flex:0 0 auto;max-width:100%}
 .feedback-icon,.feedback-qty{flex:0 1 auto;min-height:0}
@@ -178,6 +179,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .mode-btn.mode-inv.active{background:rgba(167,139,250,.12);border-color:rgba(167,139,250,.5);color:#a78bfa}
 .mode-btn.disabled{opacity:.35;cursor:not-allowed;pointer-events:none}
 .mode-indicator{height:5px;border-radius:3px;margin-top:10px;transition:background .2s}
+.mode-section.timer-on .mode-indicator{display:none}
 .mode-indicator.out{background:#f87171}
 .mode-indicator.add{background:var(--accent)}
 .mode-indicator.inv{background:#a78bfa}
@@ -220,17 +222,23 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 .pin-key{font-size:24px;font-weight:700;padding:18px 0;min-height:56px}
 .pin-dot{width:16px;height:16px;border-radius:50%;border:2px solid var(--text3);display:inline-block}
 .pin-dot.filled{background:var(--accent);border-color:var(--accent)}
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;display:none;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(6px)}
-.modal-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:32px;width:100%;max-width:520px;box-shadow:0 24px 80px rgba(0,0,0,.6);animation:modal-in .18s ease}
+.modal-overlay{position:fixed;left:0;right:0;top:var(--vv-top,0px);height:var(--vv-height,100dvh);box-sizing:border-box;background:rgba(0,0,0,.7);z-index:200;display:none;align-items:center;justify-content:center;padding:8px;overflow:hidden;backdrop-filter:blur(6px)}
+.modal-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);width:100%;max-width:520px;min-width:0;max-height:100%;min-height:0;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.6);animation:modal-in .18s ease}
 @keyframes modal-in{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.modal-body{overflow-y:auto;min-height:0;flex:1 1 auto;padding:24px 24px 8px;-webkit-overflow-scrolling:touch}
 .modal-title{font-size:22px;font-weight:700;margin-bottom:6px}
 .modal-subtitle{font-size:14px;color:var(--text2);margin-bottom:20px}
-.form-group{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
+.form-group{display:flex;flex-direction:column;gap:5px;margin-bottom:12px;min-width:0}
 .form-group label{font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.04em}
-.form-group input{padding:10px 12px;font-size:16px;border:1.5px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);outline:none;transition:border-color .15s}
+.form-group input{width:100%;min-width:0;box-sizing:border-box;padding:10px 12px;font-size:16px;border:1.5px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);outline:none;transition:border-color .15s}
 .form-group input:focus{border-color:var(--accent)}
 .form-group input::placeholder{color:var(--text3)}
-.modal-actions{display:flex;gap:10px;margin-top:20px}
+.modal-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;min-width:0}
+.modal-grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;min-width:0}
+.modal-actions{position:sticky;bottom:0;z-index:1;flex:0 0 auto;display:flex;gap:10px;margin:0;padding:12px 24px 16px;background:var(--surface)}
+@media (max-width:560px){
+  .modal-grid,.modal-grid-3{grid-template-columns:minmax(0,1fr)}
+}
 
 /* Fordonslista */
 .vehicle-list{display:flex;flex-direction:column;gap:8px;margin-bottom:16px;max-height:260px;overflow-y:auto}
@@ -254,7 +262,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
   .user-bar{padding:6px 12px}
   .logout-btn{min-height:44px;padding:8px 14px;font-size:15px}
   .feedback-card{padding:10px 16px;gap:4px}
-  .idle-icon-wrap{width:44px;height:44px;flex-basis:44px;max-height:44px}
+  .idle-icon-wrap{width:44px;flex-basis:44px;max-height:44px;max-width:44px}
   .idle-text{font-size:16px}
   .idle-hint{font-size:13px;margin-top:0}
   .feedback-icon{font-size:32px}
@@ -272,7 +280,7 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
   .scan-layout{padding:8px 12px;gap:6px}
   .scan-stage{gap:6px}
   .feedback-card{padding:6px 12px;gap:2px}
-  .idle-icon-wrap{width:32px;height:32px;flex-basis:32px;max-height:32px}
+  .idle-icon-wrap{width:32px;flex-basis:32px;max-height:32px;max-width:32px}
   .idle-text{font-size:15px}
   .idle-hint{font-size:12px}
   .feedback-icon{font-size:24px}
@@ -283,6 +291,12 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
   .mode-btn{min-height:48px;padding:4px 6px;font-size:14px}
   .mode-btn .mode-icon{font-size:16px}
   .mode-indicator{margin-top:4px}
+  .timer-bar-wrap{margin-top:4px}
+  .timer-label{margin-top:2px;font-size:11px}
+}
+@container feedback (max-height:140px){
+  .idle-icon-wrap,.feedback-icon{flex-basis:0;max-height:0;max-width:0;width:0;margin:0;padding:0;border:0;overflow:hidden;visibility:hidden}
+  .feedback-qty{font-size:22px}
 }
 </style>
 </head>
@@ -411,20 +425,25 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 <!-- ── MODAL: Välj fordon ── -->
 <div class="modal-overlay" id="vehicle-modal">
   <div class="modal-box">
-    <div class="modal-title">🚗 Koppla till fordon</div>
-    <div class="modal-subtitle">Välj fordon för detta uttag, eller fortsätt utan fordon</div>
-    <div class="vehicle-list" id="vehicle-list"></div>
-    <div class="form-group">
-      <label>Sök reg-nr</label>
-      <input id="vehicle-search" placeholder="ABC123" oninput="filterVehicles()" autocomplete="off" style="font-size:20px;letter-spacing:2px;text-transform:uppercase">
+    <div class="modal-body">
+      <div class="modal-title">🚗 Koppla till fordon</div>
+      <div class="modal-subtitle">Välj fordon för detta uttag, eller fortsätt utan fordon</div>
+      <div class="vehicle-list" id="vehicle-list"></div>
+      <div class="form-group">
+        <label>Sök reg-nr</label>
+        <input id="vehicle-search" placeholder="ABC123" oninput="filterVehicles()" autocomplete="off" style="font-size:20px;letter-spacing:2px;text-transform:uppercase">
+      </div>
     </div>
-    <button class="no-vehicle-btn" onclick="selectVehicle(null)">Fortsätt utan fordon</button>
+    <div class="modal-actions">
+      <button class="no-vehicle-btn" onclick="selectVehicle(null)">Fortsätt utan fordon</button>
+    </div>
   </div>
 </div>
 
 <!-- ── MODAL: PIN ── -->
 <div class="modal-overlay" id="pin-modal">
   <div class="modal-box" style="max-width:360px;text-align:center">
+    <div class="modal-body">
     <div class="modal-title">🔒 Ange PIN</div>
     <div class="modal-subtitle" id="pin-user-name"></div>
     <div id="pin-dots" style="display:flex;justify-content:center;gap:16px;margin:20px 0"></div>
@@ -443,27 +462,30 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
       <button class="btn pin-key" onclick="pinPress('0')">0</button>
       <button class="btn pin-key" onclick="pinBackspace()">⌫</button>
     </div>
+    </div>
   </div>
 </div>
 
 <!-- ── MODAL: Okänd streckkod ── -->
 <div class="modal-overlay" id="unknown-modal">
   <div class="modal-box">
-    <div class="modal-title">Okänd streckkod</div>
-    <div class="modal-subtitle">Kod: <span id="unknown-code-display" style="font-family:monospace;font-weight:700"></span></div>
-    <input type="hidden" id="unknown-code-value">
-    <div class="form-group"><label>Produktnamn *</label><input id="unknown-name" placeholder="T.ex. Borrbit 6mm" style="font-size:18px"></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      <div class="form-group"><label>Antal</label><input id="unknown-qty" type="number" value="1" min="0"></div>
-      <div class="form-group"><label>Beställ antal</label><input id="unknown-order-qty" type="number" value="10" min="1"></div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      <div class="form-group"><label>Beställningsnivå</label><input id="unknown-min" type="number" value="5" min="1"></div>
-      <div class="form-group"><label>Kritisk nivå</label><input id="unknown-critical" type="number" value="2" min="0"></div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      <div class="form-group"><label>Artikelnummer</label><input id="unknown-article" placeholder="12345"></div>
-      <div class="form-group"><label>Leverantör</label><input id="unknown-supplier" placeholder="Würth"></div>
+    <div class="modal-body">
+      <div class="modal-title">Okänd streckkod</div>
+      <div class="modal-subtitle">Kod: <span id="unknown-code-display" style="font-family:monospace;font-weight:700"></span></div>
+      <input type="hidden" id="unknown-code-value">
+      <div class="form-group"><label>Produktnamn *</label><input id="unknown-name" placeholder="T.ex. Borrbit 6mm" style="font-size:18px"></div>
+      <div class="modal-grid">
+        <div class="form-group"><label>Antal</label><input id="unknown-qty" type="number" value="1" min="0"></div>
+        <div class="form-group"><label>Beställ antal</label><input id="unknown-order-qty" type="number" value="10" min="1"></div>
+      </div>
+      <div class="modal-grid">
+        <div class="form-group"><label>Beställningsnivå</label><input id="unknown-min" type="number" value="5" min="1"></div>
+        <div class="form-group"><label>Kritisk nivå</label><input id="unknown-critical" type="number" value="2" min="0"></div>
+      </div>
+      <div class="modal-grid">
+        <div class="form-group"><label>Artikelnummer</label><input id="unknown-article" placeholder="12345"></div>
+        <div class="form-group"><label>Leverantör</label><input id="unknown-supplier" placeholder="Würth"></div>
+      </div>
     </div>
     <div class="modal-actions">
       <button class="btn" style="flex:1" onclick="closeUnknownModal()">Avbryt</button>
@@ -472,7 +494,9 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
   </div>
 </div>
 
-<script src="/js/scan-wedge.js"></script>
+<script src="/js/scan-wedge.js?v=__APP_VERSION__"></script>
+<script src="/js/mode-timer.js?v=__APP_VERSION__"></script>
+<script src="/js/kiosk-update.js?v=__APP_VERSION__"></script>
 <script>
 // ═══════════════════════════════════════════
 //  Scanny Kiosk — med användare & fordon
@@ -834,31 +858,49 @@ function resetLogoutTimer() {
   startLogoutTimer();
 }
 
+const modeCountdown = (window.ScannyTimer ? ScannyTimer.createCountdown() : null);
 function startAutoReset() {
   clearTimeout(autoResetTimer);
   clearInterval(timerInterval);
+  timerInterval = null;
+  if (modeCountdown) modeCountdown.stop();
   timerSecondsLeft = AUTO_RESET_MS / 1000;
   showTimer();
+  const expire = () => {
+    if (currentMode === 'add') {
+      setMode('out');
+      showFeedback('warn','⏱','Läget återställt','Tillbaka till Uttag',null);
+    } else hideTimer();
+  };
+  if (modeCountdown) {
+    modeCountdown.start(AUTO_RESET_MS, (left) => {
+      timerSecondsLeft = left;
+      updateTimerDisplay();
+    }, expire);
+    return;
+  }
   timerInterval = setInterval(() => {
     timerSecondsLeft--;
     updateTimerDisplay();
     if (timerSecondsLeft <= 0) {
       clearInterval(timerInterval);
-      if (currentMode === 'add') {
-        setMode('out');
-        showFeedback('warn','⏱','Läget återställt','Tillbaka till Uttag',null);
-      }
+      timerInterval = null;
+      expire();
     }
   }, 1000);
 }
 
 function showTimer() {
+  document.querySelector('.mode-section')?.classList.add('timer-on');
   document.getElementById('timer-bar-wrap')?.classList.add('visible');
   document.getElementById('timer-label')?.classList.add('visible');
   updateTimerDisplay();
 }
 function hideTimer() {
+  if (modeCountdown) modeCountdown.stop();
   clearInterval(timerInterval);
+  timerInterval = null;
+  document.querySelector('.mode-section')?.classList.remove('timer-on');
   document.getElementById('timer-bar-wrap')?.classList.remove('visible');
   const lbl = document.getElementById('timer-label');
   if (lbl) { lbl.classList.remove('visible','urgent'); }
@@ -973,7 +1015,9 @@ function initScanWedge() {
 // ════════════════════════════════
 //  SKANNING
 // ════════════════════════════════
+let lastScanAt = 0;
 function scanProduct(code) {
+  lastScanAt = Date.now();
   const c = String(code || '').trim();
   if (!scanDedupe.accept(c, Date.now())) return;
   const mode = currentMode;
@@ -1120,10 +1164,50 @@ async function finishInventory() {
   inventory={}; renderInvList(); setMode('out');
 }
 
+let seenAppVersion = null;
+function kioskReloadContext(version) {
+  const modalOpen = Array.prototype.some.call(document.querySelectorAll('.modal-overlay'), (el) => {
+    const d = el.style && el.style.display;
+    return !!(d && d !== 'none');
+  });
+  const active = document.activeElement;
+  const scan = document.getElementById('barcode-input');
+  return {
+    version: version,
+    seen: seenAppVersion,
+    modalOpen: modalOpen,
+    focusedTag: active && active.tagName,
+    focusedId: active && active.id,
+    manualKeyboard: !!(scan && scan.classList.contains('manual-keyboard')),
+    lastScanAt: lastScanAt,
+    now: Date.now(),
+    scanValue: scan ? scan.value : ''
+  };
+}
+async function pollKioskVersion() {
+  if (!window.ScannyUpdate) return;
+  try {
+    const res = await fetch('/api/version', { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data || !data.version) return;
+    if (!seenAppVersion) { seenAppVersion = data.version; return; }
+    if (ScannyUpdate.shouldReload(kioskReloadContext(data.version))) location.reload();
+  } catch (_) {}
+}
+
 // ── Start ──
 initScanWedge();
 initKiosk();
 setInterval(loadDb, 15000);
+if (window.ScannyUpdate) {
+  ScannyUpdate.bindModalViewport();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') pollKioskVersion();
+  });
+  setInterval(pollKioskVersion, ScannyUpdate.POLL_MS);
+  pollKioskVersion();
+}
 </script>
 </body>
 </html>

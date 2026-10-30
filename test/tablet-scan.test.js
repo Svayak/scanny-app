@@ -273,7 +273,10 @@ describe('tablet shell', () => {
     assert.equal(sw.includes('caches'), false);
     assert.match(read('server.js'), /manifest\.webmanifest/);
     assert.match(read('server.js'), /sendManifest/);
-    assert.match(read('server.js'), /sw\.js'\) res\.setHeader\('Cache-Control', 'no-cache'\)/);
+    const server = read('server.js');
+    assert.match(server, /base === 'sw\.js'/);
+    assert.match(server, /\(js\|css\|html\)/);
+    assert.match(server, /setHeader\('Cache-Control', 'no-cache'\)/);
   });
 
   it('hides the soft keyboard on both scan screens and links the PWA', () => {

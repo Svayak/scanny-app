@@ -4,7 +4,11 @@ const mongoose   = require('mongoose');
 const bcrypt     = require('bcryptjs');
 const jwt        = require('jsonwebtoken');
 const path       = require('path');
+const fs         = require('fs');
 const cors       = require('cors');
+const { assetVersion, injectAssetVersion } = require('./app-version');
+const { textField, mongoProductFilter } = require('./public/js/product-search');
+const APP_VERSION = assetVersion(__dirname);
 
 const helmet = require('helmet');
 const mongoSanitize = require('express-mongo-sanitize');
@@ -91,7 +95,8 @@ app.use(blockSensitivePaths);
 app.use(express.static(path.join(__dirname, 'public'), {
   ...staticOptions(),
   setHeaders(res, filePath) {
-    if (path.basename(filePath) === 'sw.js') res.setHeader('Cache-Control', 'no-cache');
+    const base = path.basename(filePath);
+    if (base === 'sw.js' || /\.(js|css|html)$/.test(base)) res.setHeader('Cache-Control', 'no-cache');
   }
 }));
 
@@ -342,7 +347,8 @@ app.post('/api/admin/create-tenant', async (req, res) => {
 // ══════════════════════════════════════════
 
 app.get('/api/products', authMiddleware, async (req, res) => {
-  res.json(await Product.find({ tenantId: req.tenantId }).sort({ name: 1 }).limit(10000));
+  const filter = Object.assign({ tenantId: req.tenantId }, mongoProductFilter(req.query.q));
+  res.json(await Product.find(filter).sort({ name: 1 }).limit(10000));
 });
 
 app.post('/api/products', authMiddleware, async (req, res) => {
@@ -351,7 +357,7 @@ app.post('/api/products', authMiddleware, async (req, res) => {
     if (!name || !code) return res.status(400).json({ error: 'Namn och streckkod krävs' });
     if (await Product.findOne({ tenantId: req.tenantId, code })) return res.status(409).json({ error: 'Streckkod finns redan' });
     const cleanPrice = Math.max(0, parseFloat(price) || 0);
-    const product = await Product.create({ tenantId: req.tenantId, name, code, qty: qty||0, min: min||5, critical: critical||2, orderQty: orderQty||10, articleNo: articleNo||'', supplier: supplier||'', price: cleanPrice });
+    const product = await Product.create({ tenantId: req.tenantId, name, code, qty: qty||0, min: min||5, critical: critical||2, orderQty: orderQty||10, articleNo: textField(articleNo), supplier: textField(supplier), price: cleanPrice });
     await addLog(req.tenantId, `Ny produkt tillagd: ${name}`);
     res.json(product);
   } catch (err) { serverError(res, err); }
@@ -368,8 +374,8 @@ app.patch('/api/products/:id', authMiddleware, async (req, res) => {
     if (min !== undefined) allowed.min = nonNeg(min);
     if (critical !== undefined) allowed.critical = nonNeg(critical);
     if (orderQty !== undefined) allowed.orderQty = nonNeg(orderQty);
-    if (articleNo !== undefined) allowed.articleNo = articleNo;
-    if (supplier !== undefined) allowed.supplier = supplier;
+    if (articleNo !== undefined) allowed.articleNo = textField(articleNo);
+    if (supplier !== undefined) allowed.supplier = textField(supplier);
     if (price !== undefined) allowed.price = Math.max(0, parseFloat(price) || 0);
     const product = await Product.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, allowed, { new: true });
     if (!product) return res.status(404).json({ error: 'Produkt hittades inte' });
@@ -879,8 +885,8 @@ app.post('/api/products/import', authMiddleware, adminOnly, importLimiter, expre
       const fields = {
         name,
         qty:       num(cell(row, 'qty'), 0),
-        articleNo: cell(row, 'articleNo'),
-        supplier:  cell(row, 'supplier'),
+        articleNo: textField(cell(row, 'articleNo')),
+        supplier:  textField(cell(row, 'supplier')),
       };
       if (colIdx.min >= 0)      fields.min      = num(cell(row, 'min'), 5);
       if (colIdx.critical >= 0) fields.critical = num(cell(row, 'critical'), 2);
@@ -1018,13 +1024,24 @@ app.get('/api/superadmin/stats', superAdmin, async (req, res) => {
 });
 
 
+function sendAppHtml(res, file) {
+  const html = injectAssetVersion(fs.readFileSync(file, 'utf8'), APP_VERSION);
+  res.set('Cache-Control', 'no-cache');
+  res.type('html').send(html);
+}
+
+app.get('/api/version', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ version: APP_VERSION });
+});
+
 // ── Rena URL:er ──
 app.get('/',           (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));
 app.get('/login',      (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/superadmin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'superadmin.html')));
-app.get('/app',        (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
-app.get('/kiosk/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'kiosk.html')));
-app.get('/kiosk',      (req, res) => res.sendFile(path.join(__dirname, 'public', 'kiosk.html')));
+app.get('/app',        (req, res) => sendAppHtml(res, path.join(__dirname, 'public', 'admin.html')));
+app.get('/kiosk/:slug', (req, res) => sendAppHtml(res, path.join(__dirname, 'public', 'kiosk.html')));
+app.get('/kiosk',      (req, res) => sendAppHtml(res, path.join(__dirname, 'public', 'kiosk.html')));
 app.get('/manifest.webmanifest', (req, res) => sendManifest(req.query.start, res));
 
 // ── Kiosk token — hämta JWT via slug (ingen inloggning krävs) ──
@@ -1075,7 +1092,7 @@ app.get('/:slug', async (req, res, next) => {
   try {
     const tenant = await Tenant.findOne({ slug: req.params.slug });
     if (!tenant) return next();
-    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+    sendAppHtml(res, path.join(__dirname, 'public', 'admin.html'));
   } catch(err) { next(); }
 });
 

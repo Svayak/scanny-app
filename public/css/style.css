@@ -215,11 +215,20 @@ tr:hover td{background:var(--surface2)}
 .order-badge{background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:9999px;margin-left:4px}
 
 /* ── Modal ── */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300;display:none;align-items:center;justify-content:center;padding:1rem;backdrop-filter:blur(4px)}
-.modal-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:1.5rem;width:100%;max-width:440px;box-shadow:0 24px 80px rgba(0,0,0,.5);animation:modal-in .18s ease}
+.modal-overlay{position:fixed;left:0;right:0;top:var(--vv-top,0px);height:var(--vv-height,100dvh);box-sizing:border-box;background:rgba(0,0,0,.6);z-index:300;display:none;align-items:center;justify-content:center;padding:8px;overflow:hidden;backdrop-filter:blur(4px)}
+.modal-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);width:100%;max-width:440px;min-width:0;max-height:100%;min-height:0;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.5);animation:modal-in .18s ease}
+.modal-body{overflow-y:auto;min-height:0;flex:1 1 auto;padding:1.25rem 1.25rem .5rem;-webkit-overflow-scrolling:touch}
 @keyframes modal-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
 .modal-title{font-size:16px;font-weight:600;margin-bottom:1.25rem}
-.modal-actions{display:flex;gap:8px;margin-top:1.25rem}
+.modal-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;min-width:0}
+.modal-grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;min-width:0}
+.modal-box .form-group{min-width:0}
+.modal-box .form-group input,.modal-box .form-group select{width:100%;min-width:0;box-sizing:border-box}
+.modal-box .form-group div input{width:auto;flex:1 1 0;min-width:0}
+.modal-actions{position:sticky;bottom:0;z-index:1;flex:0 0 auto;display:flex;gap:8px;margin:0;padding:12px 1.25rem 1rem;background:var(--surface)}
+@media (max-width:560px){
+  .modal-grid,.modal-grid-3{grid-template-columns:minmax(0,1fr)}
+}
 
 /* ── Admin hub ── */
 .admin-hub{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px;margin-top:.5rem}
@@ -258,7 +267,7 @@ tr:hover td{background:var(--surface2)}
   .cam-btn-mobile{display:flex!important;width:100%;min-height:52px;padding:14px;font-size:16px;font-weight:700;justify-content:center;gap:8px;border-radius:var(--radius-lg);background:var(--accent);color:#0c0f0a;border:none;cursor:pointer;margin-top:.75rem}
   .toast{bottom:70px;right:12px;left:12px;max-width:none;text-align:center}
   th:nth-child(2),td:nth-child(2),th:nth-child(4),td:nth-child(4){display:none}
-  .modal-box{padding:1.25rem}
+  .modal-box{padding:0}
   .page-header{flex-direction:column;gap:.75rem}
   .page-header>div:last-child{display:flex;flex-wrap:wrap;gap:8px;width:100%}
   .search-input{width:100%}
