@@ -627,8 +627,31 @@ async function api(method, path, body) {
   return data;
 }
 async function loadDb() {
-  try { db = await api('GET','/api/db'); if (db.vehicles) db.vehicles.forEach(v => { if (!v.id) v.id = v._id; }); if (db.products) db.products.forEach(p => { if (!p.id) p.id = p._id; }); if (db.users) db.users.forEach(u => { if (!u.id) u.id = u._id; }); setStatus(true); renderUserGrid(); }
+  try {
+    db = await api('GET','/api/db');
+    if (db.vehicles) db.vehicles.forEach(v => { if (!v.id) v.id = v._id; });
+    if (db.products) db.products.forEach(p => { if (!p.id) p.id = p._id; });
+    if (db.users) db.users.forEach(u => { if (!u.id) u.id = u._id; });
+    setStatus(true);
+    renderUserGrid();
+    refreshCurrentUser();
+  }
   catch(_) { setStatus(false); }
+}
+
+function refreshCurrentUser() {
+  if (!currentUser || !db.users) return;
+  const fresh = db.users.find(u => String(u.id) === String(currentUser.id));
+  if (!fresh) return;
+  currentUser = fresh;
+  const av = document.getElementById('bar-avatar');
+  if (av) {
+    av.style.background = fresh.color || '#0f6e56';
+    av.textContent = getInitials(fresh.name);
+  }
+  const nameEl = document.getElementById('bar-name');
+  if (nameEl) nameEl.textContent = fresh.name;
+  applyPermissions(fresh);
 }
 
 // Uppdatera en produkt lokalt från serverns svar — undviker full omladdning vid varje skanning.
@@ -718,7 +741,15 @@ function pinBackspace() {
 }
 
 async function proceedSelectUser(userId, pin) {
-  const u = db.users.find(x => x.id === userId);
+  try {
+    const users = await api('GET', '/api/users');
+    if (Array.isArray(users)) {
+      db.users = users;
+      db.users.forEach(u => { if (!u.id) u.id = u._id; });
+      renderUserGrid();
+    }
+  } catch (_) {}
+  const u = (db.users || []).find(x => String(x.id) === String(userId));
   if (!u) return;
   // Byt device-token mot en användarspecifik token — agerande användare bäddas in server-side
   try {

@@ -849,6 +849,12 @@ function renderInventering() {
         '<div>' +
           '<div class="oc-name">Inventering ' + esc(r.date) + '</div>' +
           '<div class="oc-detail">' +
+            (function () {
+              const who = window.ScannyUsers
+                ? ScannyUsers.displayUserName(r.userId, r.actorName, db.users)
+                : (r.actorDisplayName || r.actorName || '');
+              return who && who !== '—' ? esc(who) + ' &nbsp;·&nbsp; ' : '';
+            })() +
             'Totalt: ' + r.total + ' artiklar &nbsp;·&nbsp; ' +
             (diffs.length > 0
               ? '<span style="color:var(--warn)">' + diffs.length + ' differenser</span>'
@@ -905,14 +911,40 @@ function renderHistory() {
 }
 
 function renderLog() {
-  const logs = db.logs || [];
-  document.getElementById('log-list').innerHTML = logs.length === 0
+  const list = document.getElementById('log-list');
+  if (!list) return;
+  const link = window.ScannyUsers;
+  const users = db.users || [];
+  const filterEl = document.getElementById('log-user-filter');
+  const selected = filterEl ? filterEl.value : '';
+  if (filterEl) {
+    filterEl.innerHTML = '<option value="">Alla användare</option>' + users.map(u =>
+      '<option value="' + esc(u.id) + '">' + esc(u.name) + '</option>'
+    ).join('');
+    if (selected && users.some(u => String(u.id) === selected)) filterEl.value = selected;
+  }
+  const user = selected ? users.find(u => String(u.id) === selected) : null;
+  let logs = db.logs || [];
+  if (user && link) logs = logs.filter(entry => link.matchesUser(entry, user));
+  list.innerHTML = logs.length === 0
     ? '<p style="color:var(--text3);font-size:13px;padding:.5rem 0">Inga händelser ännu.</p>'
-    : logs.slice(0, 100).map(l =>
-        '<div class="log-item ' + (l.type || '') + '">' +
-        '<span class="log-time">' + l.date + ' ' + l.time + '</span>' +
-        '<span class="log-msg">' + esc(l.msg) + '</span></div>'
-      ).join('');
+    : logs.slice(0, 100).map(l => {
+        const msg = link ? link.displayLogMessage(l, users) : l.msg;
+        return '<div class="log-item ' + (l.type || '') + '">' +
+          '<span class="log-time">' + l.date + ' ' + l.time + '</span>' +
+          '<span class="log-msg">' + esc(msg) + '</span></div>';
+      }).join('');
+  const statsEl = document.getElementById('log-user-stats');
+  if (statsEl) {
+    if (user && link) {
+      const stats = link.statsForUser(user, db);
+      statsEl.textContent = stats.events + ' händelser · ' + stats.scans + ' uttag i loggen · ' +
+        stats.additions + ' påfyllningar · ' + stats.inventories + ' inventeringar · ' +
+        stats.withdrawals + ' fordonsuttag';
+    } else {
+      statsEl.textContent = '';
+    }
+  }
 }
 
 let smtpFieldsTouched = false;
@@ -1042,10 +1074,60 @@ function renderUsers() {
         </div>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button class="btn btn-sm" onclick="setUserPin('${u.id}')">🔑 PIN</button>
-        <button class="btn btn-sm btn-danger" onclick="deleteUser('${u.id}')">Ta bort</button>
+        <button class="btn btn-sm" onclick="openEditUser('${escJs(u.id)}')">Redigera</button>
+        <button class="btn btn-sm" onclick="setUserPin('${escJs(u.id)}')">🔑 PIN</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteUser('${escJs(u.id)}')">Ta bort</button>
       </div>
     </div>`).join('');
+}
+
+function openEditUser(id) {
+  const u = (db.users || []).find(x => String(x.id) === String(id));
+  const modal = document.getElementById('user-edit-modal');
+  if (!u || !modal) return;
+  document.getElementById('eu-id').value = u.id;
+  document.getElementById('eu-name').value = u.name || '';
+  const on = key => window.ScannyUsers ? ScannyUsers.checkboxOn(u.permissions, key) : false;
+  document.getElementById('eu-perm-scan').checked = on('scan');
+  document.getElementById('eu-perm-add').checked = on('add');
+  document.getElementById('eu-perm-inv').checked = on('inventory');
+  modal.style.display = 'flex';
+  setTimeout(() => document.getElementById('eu-name').focus(), 100);
+}
+
+function closeEditUserModal() {
+  const modal = document.getElementById('user-edit-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function saveEditUser() {
+  const name = document.getElementById('eu-name').value.trim();
+  if (!name) { toast('Fyll i namn', 'error'); return; }
+  const permissions = {
+    canScan: document.getElementById('eu-perm-scan').checked,
+    canAdd: document.getElementById('eu-perm-add').checked,
+    canInventory: document.getElementById('eu-perm-inv').checked
+  };
+  if (!permissions.canScan && !permissions.canAdd && !permissions.canInventory) {
+    toast('Minst en behörighet måste väljas', 'error');
+    return;
+  }
+  const id = document.getElementById('eu-id').value;
+  try {
+    await api('PATCH', '/api/users/' + id, { name, permissions });
+    toast('Användare uppdaterad: ' + name);
+    closeEditUserModal();
+    await loadAll();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+const userEditModal = document.getElementById('user-edit-modal');
+if (userEditModal) {
+  userEditModal.addEventListener('click', e => { if (e.target === userEditModal) closeEditUserModal(); });
+  userEditModal.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.tagName === 'INPUT') saveEditUser();
+    if (e.key === 'Escape') closeEditUserModal();
+  });
 }
 
 async function addUser() {
@@ -1179,6 +1261,16 @@ function renderVehicles() {
             <span>Total materialkostnad</span>
             <span>${kr(total)}</span>
           </div>
+          <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin:10px 0 6px">Senaste uttag</div>
+          ${(v.history || []).slice(0, 5).map(h => {
+            const who = window.ScannyUsers
+              ? ScannyUsers.displayUserName(h.userId, h.userName, db.users)
+              : (h.userDisplayName || h.userName || '—');
+            return `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;border-bottom:1px solid var(--border)">
+              <span>${esc(h.productName)} &nbsp;·&nbsp; ${esc(who)}</span>
+              <span style="color:var(--text3)">${esc(h.time || '')}</span>
+            </div>`;
+          }).join('')}
         </div>`; })() : ''}
     </div>`;
 

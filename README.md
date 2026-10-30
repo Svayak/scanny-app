@@ -2,6 +2,28 @@
 
 Lager, beställningar och lagerlarm för verkstäder.
 
+## Koppla historik till användar-id
+
+Kioskens användare har ett fast id. Nya uttag, påfyllningar, inventeringar och händelseloggar sparar `userId` tillsammans med namnet som ögonblicksbild. Äldre rader har bara namnet. Migreringen fyller i `userId` genom att matcha namnet mot användare i samma verkstad. Den ändrar inte meddelandetext, `userName` eller `actorName`, och den körs inte vid deploy.
+
+Kör först en torrkörning. Den skriver inget, utan visar antal per samling:
+
+```
+node scripts/backfill-user-ids.js
+```
+
+När siffrorna ser rätt ut, samma kommando med `--apply`:
+
+```
+node scripts/backfill-user-ids.js --apply
+```
+
+`MONGODB_URI` måste vara satt (samma variabel som servern). Skriptet kan köras igen. Rader som redan har `userId`, eller som redan markerats som oklara, rörs inte. Träffar bara ett namn på en användare i verkstaden kopplas raden. Borttagna användare och dubblettnamn får `userId: null` och `legacyActorName` satt till namnet som stod där. De syns sedan med det sparade namnet.
+
+Gör kopplingen innan ni byter namn på användare. Efter ett namnbyte kan gamla rader utan `userId` inte längre matchas på det nya namnet.
+
+Ordrar har ingen användarreferens (`name` där är produktnamnet) och lämnas orörda.
+
 ## E-post
 
 Systemmejl (beställningar, kritiska lagerlarm, inventeringsrapporter och testmejl) skickas i den här ordningen:
