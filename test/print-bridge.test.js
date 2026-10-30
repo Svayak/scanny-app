@@ -78,7 +78,12 @@ function harness() {
     catch (err) { if (!respondPrintError(res, err)) res.status(500).json({ error: 'Internt serverfel' }); }
   });
   app.use('/api/print/v1', createBridgeRouter(service));
-  app.use('/api/print', createUserRouter(service));
+  app.use('/api/print', (req, res, next) => {
+    if ((req.headers['x-role'] || 'admin') !== 'admin') {
+      return res.status(403).json({ error: 'Kräver admin-behörighet' });
+    }
+    next();
+  }, createUserRouter(service));
   return {
     store,
     service,
@@ -211,14 +216,38 @@ describe('print bridge API', { concurrency: 1 }, () => {
     assert.equal(after.status, 401);
   });
 
-  it('returns 403 when the key is valid but printing is switched off', async () => {
+  it('returns no jobs when the master switch is off, even with a valid key', async () => {
+    const port = server.address().port;
     h.store.tenants.push({ _id: 'tenant-d', status: 'active', settings: {} });
-    const created = await request(server.address().port, 'POST', '/api/print/key', { headers: { 'x-tenant': 'tenant-d' } });
-    const poll = await request(server.address().port, 'POST', '/api/print/v1/poll', {
+    const created = await request(port, 'POST', '/api/print/key', { headers: { 'x-tenant': 'tenant-d' } });
+    assert.equal(created.status, 200);
+    const tenant = h.store.tenants.find(t => t._id === 'tenant-d');
+    assert.equal(!!tenant.settings.printBridge.enabled, false);
+    const status = await request(port, 'GET', '/api/print/status', { headers: { 'x-tenant': 'tenant-d' } });
+    assert.equal(status.json.enabled, false);
+    h.store.jobs.push({
+      _id: 'd'.repeat(24),
+      tenantId: 'tenant-d',
+      status: 'pending',
+      name: 'Ska inte skrivas',
+      code: '444',
+      articleNo: '',
+      source: 'inleverans',
+      createdAt: new Date('2026-10-30T12:00:00Z')
+    });
+    const poll = await request(port, 'POST', '/api/print/v1/poll', {
       headers: { 'x-bridge-key': created.json.key }
     });
-    assert.equal(poll.status, 403);
-    assert.equal(poll.json.error, 'Automatisk utskrift är avstängd');
+    assert.equal(poll.status, 200);
+    assert.deepEqual(poll.json.jobs, []);
+    assert.equal(h.store.jobs.find(j => j._id === 'd'.repeat(24)).status, 'pending');
+    const queued = await h.service.enqueue('tenant-d', { name: 'Inleverans', code: '445' }, 'inleverans');
+    assert.deepEqual(queued, { queued: false, reason: 'inactive' });
+    await assert.rejects(
+      () => h.service.queueProduct('tenant-d', { name: 'Knapp', code: '446' }),
+      err => err.status === 409
+    );
+    assert.equal(h.store.jobs.some(j => j.code === '445' || j.code === '446'), false);
   });
 
   it('compares key hashes in constant time and ignores length mismatches', () => {
@@ -256,20 +285,65 @@ describe('print safeguards', { concurrency: 1 }, () => {
     assert.match(h.warnings[0], /Kunde inte köa etikett/);
   });
 
-  it('warns once when printing is on but the bridge is offline, and still does not throw', async () => {
+  it('enqueues from goods receipt and the button when the switch is on and a key exists', async () => {
     const h = harness();
     h.store.tenants.push({
       _id: 'quiet',
       status: 'active',
       settings: { printBridge: { enabled: true, keyHash: hashBridgeKey('scb_offlinekey') } }
     });
-    const first = await h.service.enqueue('quiet', { name: 'A', code: '1' }, 'inleverans');
-    const second = await h.service.enqueue('quiet', { name: 'A', code: '1' }, 'inleverans');
-    assert.equal(first.queued, false);
-    assert.equal(second.queued, false);
-    assert.equal(h.store.jobs.length, 0);
-    assert.equal(h.warnings.length, 1);
-    assert.match(h.warnings[0], /inte online/);
+    const receipt = await h.service.enqueue('quiet', { name: 'A', code: '1' }, 'inleverans');
+    const manual = await h.service.queueProduct('quiet', { name: 'A', code: '1' });
+    assert.equal(receipt.queued, true);
+    assert.equal(manual.ok, true);
+    assert.equal(h.store.jobs.length, 2);
+    assert.deepEqual(h.warnings, []);
+  });
+
+  it('keeps the master switch off by default, rejects på without a key, and only lets an admin change it', async () => {
+    const h = harness();
+    const server = await listen(h.app);
+    try {
+      const port = server.address().port;
+      h.store.tenants.push({ _id: 'switch', status: 'active', settings: {} });
+      const blocked = await request(port, 'PUT', '/api/print/settings', {
+        headers: { 'x-tenant': 'switch' },
+        body: { enabled: true }
+      });
+      assert.equal(blocked.status, 400);
+      assert.match(blocked.json.error, /Skapa en bryggnyckel innan du slår på automatisk etikettutskrift/);
+      assert.equal(!!h.store.tenants[0].settings.printBridge?.enabled, false);
+
+      const staff = await request(port, 'PUT', '/api/print/settings', {
+        headers: { 'x-tenant': 'switch', 'x-role': 'staff' },
+        body: { enabled: true }
+      });
+      assert.equal(staff.status, 403);
+      assert.equal(staff.json.error, 'Kräver admin-behörighet');
+
+      const key = await request(port, 'POST', '/api/print/key', { headers: { 'x-tenant': 'switch' } });
+      assert.equal(key.status, 200);
+      const on = await request(port, 'PUT', '/api/print/settings', {
+        headers: { 'x-tenant': 'switch' },
+        body: { enabled: true }
+      });
+      assert.equal(on.status, 200);
+      assert.equal(on.json.enabled, true);
+      const saved = await request(port, 'GET', '/api/print/status', { headers: { 'x-tenant': 'switch' } });
+      assert.equal(saved.json.enabled, true);
+      assert.equal(h.store.tenants[0].settings.printBridge.enabled, true);
+
+      const off = await request(port, 'PUT', '/api/print/settings', {
+        headers: { 'x-tenant': 'switch' },
+        body: { enabled: false }
+      });
+      assert.equal(off.status, 200);
+      assert.equal(off.json.enabled, false);
+      const again = await request(port, 'GET', '/api/print/status', { headers: { 'x-tenant': 'switch' } });
+      assert.equal(again.json.enabled, false);
+    } finally {
+      await new Promise((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
+    }
   });
 
   it('expires pending jobs older than 24 hours and does not hand them out', async () => {
@@ -425,6 +499,12 @@ describe('manual printing stays unchanged', () => {
     assert.equal(js.slice(Math.max(0, legacyAt - 120), legacyAt).includes('printLabel'), true);
     assert.equal(js.slice(Math.max(0, legacyAt - 120), legacyAt).includes('bridgePrintReady'), false);
     assert.match(js, /function bridgePrintReady\(\) \{\n  const b = db\.settings && db\.settings\.printBridge;\n  return !!\(b && b\.enabled && b\.configured\);\n\}/);
+    assert.match(js, /currentRole\(\) === 'admin'/);
+    assert.match(js, /Skapa en bryggnyckel innan du slår på automatisk etikettutskrift/);
+    assert.match(html, /<label for="pb-enabled">Automatisk etikettutskrift<\/label>/);
+    assert.match(html, /<option value="off" selected>AV<\/option>/);
+    assert.match(html, /<option value="on">PÅ<\/option>/);
+    assert.match(html, /id="pb-key-hint"/);
     assert.match(js, /if \(!bridgePrintReady\(\)\) return '';/);
     assert.match(js, /Skriv ut etikett/);
     assert.equal(js.includes("mode === 'add' ? '/api/add' : '/api/scan'"), true);

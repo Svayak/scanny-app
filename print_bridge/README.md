@@ -71,7 +71,7 @@ På en inloggad administratör, i Scanny:
 1. Öppna **Admin → Inställningar**.
 2. Under **Automatisk etikettskrivare**, klicka **Skapa bryggnyckel**.
 3. Kopiera nyckeln direkt. Den visas bara en gång. Behöver ni en ny, använd **Rotera nyckel**. Den gamla slutar då fungera.
-4. Kryssa i **Aktivera automatisk utskrift**.
+4. Ställ **Automatisk etikettutskrift** på **PÅ**. Reglaget står på **AV** från början. Utan bryggnyckel går det inte att slå på, och en hint visas.
 
 Nyckeln är en hemlighet, som ett lösenord. Lägg den inte i mejl eller i git. Filen `config.json` ska bara finnas på verkstadsdatorn.
 
@@ -141,7 +141,7 @@ Bryggan ska gå när verkstadens användare är inloggad, så att skrivarkön fi
 | --- | --- |
 | `bridge_key saknas` | Fyll i nyckeln i `config.json`. |
 | 401 i loggen | Nyckeln är fel eller återkallad. Skapa en ny under Inställningar och klistra in den. Starta om bryggan. |
-| `Automatisk utskrift är avstängd` | Kryssa i **Aktivera automatisk utskrift** och spara genom kryssrutan. |
+| Bryggan är online men inget skrivs ut | **Automatisk etikettutskrift** står på **AV**. Ställ den på **PÅ**. Utan nyckel stannar reglaget på AV. |
 | Brygga: offline | Fönstret eller aktiviteten körs inte, eller datorn når inte `https://scanny.se`. Öppna adressen i Chrome på samma dator. |
 | Hittade ingen QL-810W | Skrivaren syns inte i Windows. Sätt i USB-kabeln och kontrollera Brothers drivrutin. Sätt `printer_name` om namnet är annorlunda. |
 | Flera skrivare matchar | Sätt `printer_name` till det exakta namnet. |

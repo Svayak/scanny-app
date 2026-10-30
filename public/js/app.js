@@ -1346,6 +1346,19 @@ function printLabel(id) {
 }
 
 // Knappen visas bara när automatisk utskrift är på. Webbläsarens etikettknapp finns kvar.
+function currentRole() {
+  try {
+    const part = (getToken() || '').split('.')[1];
+    if (!part) return '';
+    const padded = part.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = padded + '='.repeat((4 - (padded.length % 4)) % 4);
+    const json = JSON.parse(atob(pad));
+    return json && json.role ? json.role : '';
+  } catch (e) {
+    return '';
+  }
+}
+
 function bridgePrintReady() {
   const b = db.settings && db.settings.printBridge;
   return !!(b && b.enabled && b.configured);
@@ -1463,17 +1476,25 @@ let pbRefreshAt = 0;
 
 function renderPrintBridge() {
   const b = (db.settings && db.settings.printBridge) || {};
+  const admin = currentRole() === 'admin';
   const enabled = document.getElementById('pb-enabled');
-  if (enabled) enabled.checked = !!b.enabled;
+  if (enabled) {
+    enabled.value = b.enabled ? 'on' : 'off';
+    enabled.disabled = !admin;
+  }
+  const hint = document.getElementById('pb-key-hint');
+  if (hint) hint.hidden = !!b.configured;
   const status = document.getElementById('pb-status');
   if (status) status.textContent = bridgeStatusText(b);
   const configured = !!b.configured;
   const createBtn = document.getElementById('pb-create');
   const rotateBtn = document.getElementById('pb-rotate');
   const revokeBtn = document.getElementById('pb-revoke');
-  if (createBtn) createBtn.hidden = configured;
-  if (rotateBtn) rotateBtn.hidden = !configured;
-  if (revokeBtn) revokeBtn.hidden = !configured;
+  if (createBtn) { createBtn.hidden = configured; createBtn.disabled = !admin; }
+  if (rotateBtn) { rotateBtn.hidden = !configured; rotateBtn.disabled = !admin; }
+  if (revokeBtn) { revokeBtn.hidden = !configured; revokeBtn.disabled = !admin; }
+  const testBtn = document.getElementById('pb-test');
+  if (testBtn) testBtn.disabled = !admin;
   const box = document.getElementById('pb-key-once');
   const val = document.getElementById('pb-key-value');
   if (box && val && !val.textContent) box.hidden = true;
@@ -1528,14 +1549,25 @@ function showBridgeKeyOnce(key) {
 
 async function onPrintBridgeEnabled() {
   const el = document.getElementById('pb-enabled');
+  const hint = document.getElementById('pb-key-hint');
   if (!el) return;
+  const wantOn = el.value === 'on';
+  const configured = !!(db.settings && db.settings.printBridge && db.settings.printBridge.configured);
+  if (wantOn && !configured) {
+    el.value = 'off';
+    if (hint) hint.hidden = false;
+    toast('Skapa en bryggnyckel innan du slår på automatisk etikettutskrift.', 'error');
+    return;
+  }
   try {
-    await printApi('PUT', '/api/print/settings', { enabled: !!el.checked });
-    toast(el.checked ? 'Automatisk utskrift aktiverad' : 'Automatisk utskrift avstängd');
+    await printApi('PUT', '/api/print/settings', { enabled: wantOn });
+    if (hint) hint.hidden = true;
+    toast(wantOn ? 'Automatisk etikettutskrift är på' : 'Automatisk etikettutskrift är av');
     pbRefreshAt = 0;
     await loadAll();
   } catch (err) {
-    el.checked = !el.checked;
+    el.value = wantOn ? 'off' : 'on';
+    if (hint && /bryggnyckel/.test(err.message || '')) hint.hidden = false;
     toast(err.message, 'error');
   }
 }

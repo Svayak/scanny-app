@@ -9,7 +9,7 @@ const JOB_TTL_MS = 24 * 60 * 60 * 1000;
 const HEARTBEAT_FRESH_MS = 90 * 1000;
 const CLAIM_STALE_MS = 10 * 60 * 1000;
 const MAX_CLAIM = 5;
-const OFFLINE_WARN_MS = 10 * 60 * 1000;
+const KEY_HINT = 'Skapa en bryggnyckel innan du slår på automatisk etikettutskrift.';
 const DUMMY_HASH = crypto.createHash('sha256').update('scanny-print-bridge-dummy-v1').digest('hex');
 const KEY_PREFIX = 'scb_';
 
@@ -38,14 +38,10 @@ function bridgeOf(tenant) {
   return (tenant && tenant.settings && tenant.settings.printBridge) || {};
 }
 
-function isBridgeActive(tenant, now) {
+// Huvudströmbrytaren. På kräver bara att en bryggnyckel finns. Livstecken styr status, inte kön.
+function isBridgeActive(tenant) {
   const bridge = bridgeOf(tenant);
-  if (!bridge.enabled || !bridge.keyHash) return false;
-  if (!bridge.lastHeartbeatAt) return false;
-  const seen = new Date(bridge.lastHeartbeatAt).getTime();
-  if (!Number.isFinite(seen)) return false;
-  const age = now.getTime() - seen;
-  return age >= 0 && age <= HEARTBEAT_FRESH_MS;
+  return !!(bridge.enabled && bridge.keyHash);
 }
 
 function publicPrintBridge(raw, now = new Date()) {
@@ -101,7 +97,6 @@ function jobPayload(job) {
 function createPrintService(store, opts = {}) {
   const nowFn = opts.now || (() => new Date());
   const warnLog = opts.warn || (msg => console.warn(msg));
-  const offlineWarned = new Map();
 
   async function authenticate(rawKey) {
     const key = typeof rawKey === 'string' ? rawKey.trim() : '';
@@ -110,7 +105,6 @@ function createPrintService(store, opts = {}) {
     const stored = (tenant && bridgeOf(tenant).keyHash) || DUMMY_HASH;
     const match = timingSafeEqualHex(hashed, stored);
     if (!key || !tenant || !match) return { tenant: null, reason: 'bad-key' };
-    if (!bridgeOf(tenant).enabled) return { tenant, reason: 'disabled' };
     return { tenant, reason: 'ok' };
   }
 
@@ -124,6 +118,7 @@ function createPrintService(store, opts = {}) {
   async function poll(tenant) {
     const now = nowFn();
     await expireAndReclaim(tenant._id, now);
+    if (!bridgeOf(tenant).enabled) return { jobs: [] };
     const cutoff = new Date(now.getTime() - JOB_TTL_MS);
     const jobs = [];
     for (let i = 0; i < MAX_CLAIM; i++) {
@@ -191,18 +186,7 @@ function createPrintService(store, opts = {}) {
     try {
       tenant = await store.getTenant(tenantId);
       if (!tenant) return { queued: false, reason: 'no-tenant' };
-      if (!isBridgeActive(tenant, now)) {
-        const bridge = bridgeOf(tenant);
-        if (bridge.enabled && bridge.keyHash) {
-          const id = String(tenantId);
-          const prev = offlineWarned.get(id) || 0;
-          if (now.getTime() - prev >= OFFLINE_WARN_MS) {
-            offlineWarned.set(id, now.getTime());
-            warnLog(`[print] Inleverans köade ingen etikett: bryggan är inte online (${id})`);
-          }
-        }
-        return { queued: false, reason: 'inactive' };
-      }
+      if (!isBridgeActive(tenant)) return { queued: false, reason: 'inactive' };
       const job = await store.createJob(snapshot(tenantId, product, source || 'manual', now));
       return { queued: true, id: String(job._id) };
     } catch (err) {
@@ -216,6 +200,7 @@ function createPrintService(store, opts = {}) {
     const tenant = await store.getTenant(tenantId);
     if (!tenant) throw new PrintHttpError(404, 'Tenant hittades inte');
     const bridge = ensureBridge(tenant);
+    if (enabled && !bridge.keyHash) throw new PrintHttpError(400, KEY_HINT);
     bridge.enabled = enabled;
     await store.saveTenant(tenant);
     return publicPrintBridge(bridge, nowFn());
@@ -248,8 +233,10 @@ function createPrintService(store, opts = {}) {
   async function requireActive(tenantId) {
     const tenant = await store.getTenant(tenantId);
     if (!tenant) throw new PrintHttpError(404, 'Tenant hittades inte');
-    if (!isBridgeActive(tenant, nowFn())) {
-      throw new PrintHttpError(409, 'Automatisk utskrift är inte aktiverad eller bryggan är offline. Skriv ut via webbläsaren i stället.');
+    const bridge = bridgeOf(tenant);
+    if (!bridge.keyHash) throw new PrintHttpError(400, KEY_HINT);
+    if (!bridge.enabled) {
+      throw new PrintHttpError(409, 'Automatisk etikettutskrift är av. Skriv ut via webbläsaren i stället.');
     }
     return tenant;
   }
@@ -268,8 +255,9 @@ function createPrintService(store, opts = {}) {
   async function testPrint(tenantId) {
     const tenant = await store.getTenant(tenantId);
     if (!tenant) throw new PrintHttpError(404, 'Tenant hittades inte');
-    if (!isBridgeActive(tenant, nowFn())) {
-      throw new PrintHttpError(409, 'Bryggan är inte online. Starta den på verkstadsdatorn och försök igen.');
+    if (!bridgeOf(tenant).keyHash) throw new PrintHttpError(400, KEY_HINT);
+    if (!bridgeOf(tenant).enabled) {
+      throw new PrintHttpError(409, 'Automatisk etikettutskrift är av. Skriv ut via webbläsaren i stället.');
     }
     try {
       const job = await store.createJob(snapshot(tenantId, {
@@ -336,7 +324,6 @@ function createBridgeRouter(service) {
     if (extracted.reject) return res.status(401).json({ error: 'Ogiltig bryggnyckel' });
     try {
       const auth = await service.authenticate(extracted.key);
-      if (auth.reason === 'disabled') return res.status(403).json({ error: 'Automatisk utskrift är avstängd' });
       if (!auth.tenant) return res.status(401).json({ error: 'Ogiltig bryggnyckel' });
       if (auth.tenant.status === 'paused' || auth.tenant.status === 'cancelled') {
         return res.status(403).json({ error: 'Kontot är pausat' });
@@ -540,5 +527,6 @@ module.exports = {
   createMemoryStore,
   createMongooseStore,
   createPrintFeature,
-  respondPrintError
+  respondPrintError,
+  KEY_HINT
 };
