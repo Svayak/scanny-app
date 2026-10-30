@@ -26,11 +26,22 @@ jobs:
         run: |
           set -euo pipefail
           DATE=$(date +%Y-%m-%d)
+          # Box-runnerns DNS svarar inte på SRV: lös upp via DoH-fallback till mongodb://-URI.
+          urifile=$(mktemp); chmod 600 "$urifile"
+          node scripts/resolve-srv-uri.js "$urifile"
+          MONGODB_URI="$(cat "$urifile")"
+          rm -f "$urifile"
           errfile=$(mktemp)
-          set +e
-          mongodump --uri="$MONGODB_URI" --archive="backup-$DATE.gz" --gzip --dialTimeout=30 --numParallelCollections=1 2>"$errfile"
-          code=$?
-          set -e
+          code=1
+          for attempt in 1 2 3; do
+            set +e
+            mongodump --uri="$MONGODB_URI" --archive="backup-$DATE.gz" --gzip --dialTimeout=30 --numParallelCollections=1 2>"$errfile"
+            code=$?
+            set -e
+            [ "$code" -eq 0 ] && break
+            echo "mongodump attempt $attempt failed (exit $code)"
+            [ "$attempt" -lt 3 ] && sleep $((attempt * 15))
+          done
           node scripts/scrub-stream.js "$errfile" "$code"
 
       # azure/CLI@v2 kör az i en Docker-container; box-runnern har inte Docker,
