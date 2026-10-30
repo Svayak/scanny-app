@@ -536,7 +536,7 @@ describe('manual printing stays unchanged', () => {
     if (!product) return res.status(404).json({ error: 'Produkt hittades inte' });
     const tenant = await Tenant.findById(req.tenantId);
     await printLabel(product, tenant?.settings || {});
-    await writeLog(req, \`Etikett utskriven: \${product.name}\`);
+    await writeLog(req, \`Etikett utskriven: \${product.name}\`, 'normal', logQuery.fromProduct(product, 'admin'));
     res.json({ ok: true });
   } catch (err) { res.status(400).json({ error: mail.safeErrorMessage(err, [process.env.SMTP_PASSWORD]) || 'Utskrift misslyckades' }); }
 });`;

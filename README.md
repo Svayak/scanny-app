@@ -22,6 +22,8 @@ node scripts/backfill-user-ids.js --apply
 
 Gör kopplingen innan ni byter namn på användare. Efter ett namnbyte kan gamla rader utan `userId` inte längre matchas på det nya namnet.
 
+Samma skript fyller också i strukturerade loggfält (`activityType`, produktnamn och antal) där den gamla texten kan tolkas säkert. `msg` lämnas orörd. Torrkörningen visar hur många rader som kan tolkas. Rader som redan har `activityType` hoppas över.
+
 Ordrar har ingen användarreferens (`name` där är produktnamnet) och lämnas orörda.
 
 ## E-post

@@ -163,6 +163,16 @@ tr:hover td{background:var(--surface2)}
 
 /* ── Logg ── */
 .log-list{display:flex;flex-direction:column}
+.log-filters{display:flex;flex-wrap:wrap;gap:12px 16px;align-items:flex-end;margin:0 0 1rem}
+.log-filters label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2);min-width:0}
+.log-filters input:not([type="checkbox"]),.log-filters select{background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 10px;min-width:140px}
+.log-types{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;font-size:13px;padding-bottom:8px}
+.log-types label{flex-direction:row;align-items:center;gap:6px;font-size:13px;color:var(--text);min-width:0}
+.log-types input{width:auto;min-width:0;padding:0}
+.log-sort{background:none;border:0;color:inherit;font:inherit;letter-spacing:inherit;text-transform:inherit;cursor:pointer;padding:0;display:inline-flex;align-items:center;gap:4px}
+.log-table th,.log-table td{text-align:left}
+.log-table th.num,.log-table td.num{text-align:right}
+.log-pager{display:flex;gap:12px;align-items:center;justify-content:flex-end;margin-top:12px;font-size:13px;color:var(--text2)}
 .log-item{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);font-size:13px}
 .log-item:last-child{border-bottom:none}
 .log-time{min-width:130px;font-size:11px;color:var(--text3);padding-top:1px;flex-shrink:0}
@@ -267,6 +277,7 @@ tr:hover td{background:var(--surface2)}
   .cam-btn-mobile{display:flex!important;width:100%;min-height:52px;padding:14px;font-size:16px;font-weight:700;justify-content:center;gap:8px;border-radius:var(--radius-lg);background:var(--accent);color:#0c0f0a;border:none;cursor:pointer;margin-top:.75rem}
   .toast{bottom:70px;right:12px;left:12px;max-width:none;text-align:center}
   th:nth-child(2),td:nth-child(2),th:nth-child(4),td:nth-child(4){display:none}
+  .log-table th,.log-table td{display:table-cell}
   .modal-box{padding:0}
   .page-header{flex-direction:column;gap:.75rem}
   .page-header>div:last-child{display:flex;flex-wrap:wrap;gap:8px;width:100%}

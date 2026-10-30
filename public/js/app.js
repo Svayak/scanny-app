@@ -910,40 +910,144 @@ function renderHistory() {
   ).join('');
 }
 
-function renderLog() {
-  const list = document.getElementById('log-list');
-  if (!list) return;
-  const link = window.ScannyUsers;
-  const users = db.users || [];
-  const filterEl = document.getElementById('log-user-filter');
-  const selected = filterEl ? filterEl.value : '';
-  if (filterEl) {
-    filterEl.innerHTML = '<option value="">Alla användare</option>' + users.map(u =>
-      '<option value="' + esc(u.id) + '">' + esc(u.name) + '</option>'
-    ).join('');
-    if (selected && users.some(u => String(u.id) === selected)) filterEl.value = selected;
+let logState = { sort: 'date', dir: 'desc', page: 1, pageSize: 50, total: 0 };
+let logSearchTimer = null;
+
+function logPanelActive() {
+  const panel = document.getElementById('tab-logg');
+  return !!(panel && panel.classList.contains('active'));
+}
+
+function fillLogUsers() {
+  const select = document.getElementById('log-user');
+  if (!select) return;
+  const selected = select.value;
+  const options = ['<option value="">Alla</option>', '<option value="unknown">Borttagen/okänd</option>'];
+  (db.users || []).forEach(user => {
+    options.push('<option value="' + esc(user.id) + '">' + esc(user.name) + '</option>');
+  });
+  select.innerHTML = options.join('');
+  if (selected && [...select.options].some(option => option.value === selected)) select.value = selected;
+}
+
+function logQueryString(includePage) {
+  const params = new URLSearchParams();
+  params.set('sort', logState.sort);
+  params.set('dir', logState.dir);
+  params.set('pageSize', String(logState.pageSize));
+  if (includePage) params.set('page', String(logState.page));
+  const from = document.getElementById('log-from');
+  const to = document.getElementById('log-to');
+  const user = document.getElementById('log-user');
+  const q = document.getElementById('log-q');
+  if (from && from.value) params.set('from', from.value);
+  if (to && to.value) params.set('to', to.value);
+  if (user && user.value) params.set('userId', user.value);
+  document.querySelectorAll('input[name="log-type"]:checked').forEach(box => params.append('type', box.value));
+  if (q && q.value.trim()) params.set('q', q.value.trim());
+  return params.toString();
+}
+
+function sortMark(key) {
+  const el = document.getElementById('log-ind-' + key);
+  const btn = document.querySelector('.log-sort[data-sort="' + key + '"]');
+  if (!el) return;
+  const active = logState.sort === key;
+  el.textContent = active ? (logState.dir === 'asc' ? '▲' : '▼') : '';
+  if (btn) btn.setAttribute('aria-sort', active ? (logState.dir === 'asc' ? 'ascending' : 'descending') : 'none');
+}
+
+function renderLogTable(items) {
+  const body = document.getElementById('log-body');
+  if (!body) return;
+  ['date', 'articleNo', 'product', 'person', 'type', 'qty'].forEach(sortMark);
+  if (!items.length) {
+    body.innerHTML = '<tr><td colspan="7" style="color:var(--text3)">Inga händelser matchar filtret.</td></tr>';
+  } else {
+    body.innerHTML = items.map(item => {
+      const when = [item.date, item.time].filter(Boolean).join(' ');
+      const qty = item.qty == null ? '—' : item.qty;
+      return '<tr class="log-row ' + esc(item.severity || '') + '">' +
+        '<td>' + esc(when || '—') + '</td>' +
+        '<td>' + esc(item.articleNo || '—') + '</td>' +
+        '<td>' + esc(item.productName || '—') + '</td>' +
+        '<td>' + esc(item.person || '—') + '</td>' +
+        '<td>' + esc(item.activityLabel || '—') + '</td>' +
+        '<td class="num">' + esc(qty) + '</td>' +
+        '<td>' + esc(item.msg || '') + '</td></tr>';
+    }).join('');
   }
-  const user = selected ? users.find(u => String(u.id) === selected) : null;
-  let logs = db.logs || [];
-  if (user && link) logs = logs.filter(entry => link.matchesUser(entry, user));
-  list.innerHTML = logs.length === 0
-    ? '<p style="color:var(--text3);font-size:13px;padding:.5rem 0">Inga händelser ännu.</p>'
-    : logs.slice(0, 100).map(l => {
-        const msg = link ? link.displayLogMessage(l, users) : l.msg;
-        return '<div class="log-item ' + (l.type || '') + '">' +
-          '<span class="log-time">' + l.date + ' ' + l.time + '</span>' +
-          '<span class="log-msg">' + esc(msg) + '</span></div>';
-      }).join('');
-  const statsEl = document.getElementById('log-user-stats');
-  if (statsEl) {
-    if (user && link) {
-      const stats = link.statsForUser(user, db);
-      statsEl.textContent = stats.events + ' händelser · ' + stats.scans + ' uttag i loggen · ' +
-        stats.additions + ' påfyllningar · ' + stats.inventories + ' inventeringar · ' +
-        stats.withdrawals + ' fordonsuttag';
-    } else {
-      statsEl.textContent = '';
-    }
+  const pager = document.getElementById('log-pager');
+  if (!pager) return;
+  const pages = Math.max(1, Math.ceil((logState.total || 0) / logState.pageSize));
+  pager.innerHTML =
+    '<button type="button" class="btn btn-sm" onclick="moveLogPage(-1)"' + (logState.page <= 1 ? ' disabled' : '') + '>Föregående</button>' +
+    '<span>Sida ' + logState.page + ' av ' + pages + ' · ' + (logState.total || 0) + ' rader</span>' +
+    '<button type="button" class="btn btn-sm" onclick="moveLogPage(1)"' + (logState.page >= pages ? ' disabled' : '') + '>Nästa</button>';
+}
+
+async function loadActivityLog() {
+  if (!logPanelActive() || !document.getElementById('log-body')) return;
+  fillLogUsers();
+  try {
+    const data = await api('GET', '/api/log?' + logQueryString(true));
+    if (!data) return;
+    logState.total = data.total || 0;
+    logState.page = data.page || logState.page;
+    if (data.pageSize) logState.pageSize = data.pageSize;
+    renderLogTable(data.items || []);
+  } catch (err) {
+    const body = document.getElementById('log-body');
+    if (body) body.innerHTML = '<tr><td colspan="7" style="color:var(--danger)">' + esc(err.message || 'Kunde inte hämta loggen') + '</td></tr>';
+  }
+}
+
+function renderLog() {
+  loadActivityLog();
+}
+
+function applyLogFilters() {
+  logState.page = 1;
+  loadActivityLog();
+}
+
+function queueLogSearch() {
+  clearTimeout(logSearchTimer);
+  logSearchTimer = setTimeout(applyLogFilters, 300);
+}
+
+function sortActivityLog(key) {
+  if (logState.sort === key) logState.dir = logState.dir === 'asc' ? 'desc' : 'asc';
+  else {
+    logState.sort = key;
+    logState.dir = key === 'date' ? 'desc' : 'asc';
+  }
+  logState.page = 1;
+  loadActivityLog();
+}
+
+function moveLogPage(step) {
+  logState.page = Math.max(1, logState.page + step);
+  loadActivityLog();
+}
+
+async function exportActivityCsv() {
+  try {
+    const token = getToken();
+    const res = await fetch('/api/log.csv?' + logQueryString(false), {
+      headers: token ? { Authorization: 'Bearer ' + token } : {}
+    });
+    if (!res.ok) throw new Error('Exporten misslyckades');
+    const blob = await res.blob();
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'handelser.csv';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  } catch (err) {
+    toast(err.message || 'Exporten misslyckades', 'error');
   }
 }
 

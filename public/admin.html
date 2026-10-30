@@ -270,12 +270,46 @@
       </button>
       <div class="page-header">
         <h1>Händelselogg</h1>
-        <label for="log-user-filter" style="font-size:13px;color:var(--text2);display:flex;align-items:center;gap:8px">Användare
-          <select id="log-user-filter" onchange="renderLog()" style="min-width:180px"></select>
+        <button type="button" class="btn" onclick="exportActivityCsv()">Exportera CSV</button>
+      </div>
+      <div class="log-filters">
+        <label>Från <input type="date" id="log-from" onchange="applyLogFilters()"></label>
+        <label>Till <input type="date" id="log-to" onchange="applyLogFilters()"></label>
+        <label>Person
+          <select id="log-user" onchange="applyLogFilters()">
+            <option value="">Alla</option>
+            <option value="unknown">Borttagen/okänd</option>
+          </select>
+        </label>
+        <div class="log-types" role="group" aria-label="Typ">
+          <span>Typ</span>
+          <label><input type="checkbox" name="log-type" value="uttag" onchange="applyLogFilters()"> Uttag</label>
+          <label><input type="checkbox" name="log-type" value="addera" onchange="applyLogFilters()"> Addera</label>
+          <label><input type="checkbox" name="log-type" value="inventering" onchange="applyLogFilters()"> Inventering</label>
+          <label><input type="checkbox" name="log-type" value="admin" onchange="applyLogFilters()"> Admin</label>
+          <label><input type="checkbox" name="log-type" value="ovrigt" onchange="applyLogFilters()"> Övrigt</label>
+        </div>
+        <label>Sök
+          <input id="log-q" placeholder="Namn, art.nr eller streckkod" oninput="queueLogSearch()">
         </label>
       </div>
-      <div id="log-user-stats" style="font-size:13px;color:var(--text2);min-height:1.2em;margin:-0.25rem 0 0.75rem"></div>
-      <div class="log-list" id="log-list"></div>
+      <div class="table-wrap">
+        <table class="log-table">
+          <thead>
+            <tr>
+              <th><button type="button" class="log-sort" data-sort="date" onclick="sortActivityLog('date')">Datum <span id="log-ind-date"></span></button></th>
+              <th><button type="button" class="log-sort" data-sort="articleNo" onclick="sortActivityLog('articleNo')">Art.nr <span id="log-ind-articleNo"></span></button></th>
+              <th><button type="button" class="log-sort" data-sort="product" onclick="sortActivityLog('product')">Produkt <span id="log-ind-product"></span></button></th>
+              <th><button type="button" class="log-sort" data-sort="person" onclick="sortActivityLog('person')">Person <span id="log-ind-person"></span></button></th>
+              <th><button type="button" class="log-sort" data-sort="type" onclick="sortActivityLog('type')">Typ <span id="log-ind-type"></span></button></th>
+              <th class="num"><button type="button" class="log-sort" data-sort="qty" onclick="sortActivityLog('qty')">Antal <span id="log-ind-qty"></span></button></th>
+              <th>Händelse</th>
+            </tr>
+          </thead>
+          <tbody id="log-body"></tbody>
+        </table>
+      </div>
+      <div id="log-pager" class="log-pager"></div>
     </div>
 
     <!-- ── ADMIN SUB: INSTÄLLNINGAR ── -->
