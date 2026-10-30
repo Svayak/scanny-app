@@ -20,7 +20,7 @@ describe('settings UI for lagerlarm', () => {
       assert.match(html, /id="s-alert-email"/);
       assert.match(html, /Skicka testmejl/);
       assert.match(html, /Ändra avsändaradress/);
-      assert.match(html, /Mejl skickas från DoNotReply@scanny\.se\. Vill du skicka från en egen adress kan du ange SMTP-uppgifter\./);
+      assert.match(html, /Mejl skickas från noreply@altitudmedia\.se\. Vill du skicka från en egen adress kan du ange SMTP-uppgifter\./);
 
       const marker = 'id="smtp-fields" hidden';
       const start = html.indexOf(marker);
@@ -40,6 +40,7 @@ describe('settings UI for lagerlarm', () => {
     assert.match(js, /body\.alertEmail/);
     assert.match(js, /Hit skickas kritiska lagerlarm\. Beställningar och inventeringsrapporter skickas till chefens e-post\./);
     assert.match(js, /\/api\/settings\/test-alert/);
+    assert.match(js, /Testmejl skickat \(\$\{res\.channel\}\)/);
     assert.match(js, /smtpHost:\s+document\.getElementById\('s-host'\)\.value\.trim\(\)/);
     assert.match(js, /if \(pass\) body\.smtpPass = pass/);
   });
