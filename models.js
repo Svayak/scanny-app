@@ -47,6 +47,7 @@ const userSchema = new mongoose.Schema({
   password:  { type: String, required: true },
   role:      { type: String, enum: ['admin', 'staff'], default: 'staff' },
   color:     { type: String, default: '#0f6e56' },
+  initials:  { type: String, default: '' },
   pin:       { type: String, default: '' },   // bcrypt-hash av 4-siffrig PIN (kiosk-profilval)
   permissions: {
     canScan:      { type: Boolean, default: true },
@@ -101,19 +102,26 @@ const vehicleSchema = new mongoose.Schema({
   archived:      { type: Boolean, default: false },
   archivedAt:    String,
   lastExportAt:  String,
+  // history[]: time, productName, qty, userName (ögonblicksbild), userId, legacyActorName, articleNo, supplier
   history:       [{ type: mongoose.Schema.Types.Mixed }],
   createdAt:     { type: Date, default: Date.now }
 });
 
 // ── Logg ──
+// msg och actorName är textögonblicksbilder. userId pekar på användaren.
+// legacyActorName sätts av migreringen när namnet inte kan kopplas unikt.
 const logSchema = new mongoose.Schema({
   tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true },
   time:     String,
   date:     String,
   msg:      String,
   type:     { type: String, default: 'normal' },
+  userId:   { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  actorName: { type: String, default: '' },
+  legacyActorName: { type: String, default: '' },
   createdAt: { type: Date, default: Date.now }
 });
+logSchema.index({ tenantId: 1, userId: 1 });
 
 // ── Inventeringsrapport ──
 const inventoryReportSchema = new mongoose.Schema({
@@ -123,9 +131,12 @@ const inventoryReportSchema = new mongoose.Schema({
   total:     Number,
   diffCount: Number,
   actorName: { type: String, default: '' },
+  userId:    { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  legacyActorName: { type: String, default: '' },
   entries:   [{ type: mongoose.Schema.Types.Mixed }],
   createdAt: { type: Date, default: Date.now }
 });
+inventoryReportSchema.index({ tenantId: 1, userId: 1 });
 
 // ── Utskriftskö (hämtas av den lokala bryggan) ──
 const printJobSchema = new mongoose.Schema({

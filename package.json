@@ -5,6 +5,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
+    "backfill:user-ids": "node scripts/backfill-user-ids.js",
     "test:bridge": "python3 -m unittest discover -s print_bridge/tests -v"
   },
   "engines": {

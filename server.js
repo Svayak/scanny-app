@@ -8,6 +8,7 @@ const fs         = require('fs');
 const cors       = require('cors');
 const { assetVersion, injectAssetVersion } = require('./app-version');
 const { textField, mongoProductFilter } = require('./public/js/product-search');
+const userLink = require('./public/js/user-link');
 const APP_VERSION = assetVersion(__dirname);
 
 const helmet = require('helmet');
@@ -172,13 +173,14 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost/scanny')
   .catch(err => { console.error('MongoDB-fel:', mail.safeErrorMessage(err, [process.env.MONGODB_URI, process.env.SMTP_PASSWORD])); process.exit(1); });
 
 // ── Hjälpfunktioner ──
-function addLog(tenantId, msg, type = 'normal') {
+function addLog(tenantId, msg, type = 'normal', actor = null) {
   const now = new Date();
   return Log.create({
     tenantId,
     time: now.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }),
     date: now.toLocaleDateString('sv-SE'),
-    msg, type
+    msg, type,
+    ...userLink.actorFields(actor)
   }).catch(() => {});
 }
 
@@ -295,38 +297,26 @@ async function checkTenantActive(req, res, next) {
   } catch(err) { next(); }
 }
 
-// Hämta agerande användare: inloggad (userId i token) eller kiosk-vald (actorId i body)
+// Hämta agerande användare från den signerade token (aldrig från request-body).
 async function getActor(req) {
-  // Agerande användare hämtas ENDAST från den signerade token (aldrig från request-body)
+  // Kioskens användare ligger i token efter /api/kiosk/user-token.
   const actorId = req.user?.userId;
   if (!actorId) return null;
   try { return await User.findOne({ _id: actorId, tenantId: req.tenantId }); }
   catch (_) { return null; }
 }
 
-// Behörighetskontroll. Blockerar endast om behörigheten explicit satts till false.
-// Admin har alltid full behörighet. Stödjer både nya (canScan) och gamla (scan) fältnamn.
-function hasPermission(user, key) {
-  if (!user) return false;
-  if (user.role === 'admin') return true;
-  const p = user.permissions || {};
-  const map = {
-    scan:      p.canScan      ?? p.scan,
-    add:       p.canAdd       ?? p.add,
-    inventory: p.canInventory ?? p.inventory,
-  };
-  return map[key] !== false;
+// Läser användaren från databasen vid varje anrop, så en ändrad behörighet gäller direkt.
+const requirePermission = userLink.createPermissionGate(getActor);
+
+async function writeLog(req, msg, type = 'normal') {
+  const actor = req.actor || await getActor(req);
+  return addLog(req.tenantId, msg, type, actor);
 }
 
-// Middleware-fabrik: kräver en viss behörighet för agerande användare
-function requirePermission(key, label) {
-  return async (req, res, next) => {
-    const actor = await getActor(req);
-    if (!actor) return res.status(403).json({ error: 'Kunde inte identifiera användare — välj användare igen' });
-    if (!hasPermission(actor, key)) return res.status(403).json({ error: `Saknar behörighet för ${label}` });
-    req.actor = actor;
-    next();
-  };
+async function userIndex(tenantId) {
+  const users = await User.find({ tenantId }).select('name');
+  return userLink.indexUsers(users);
 }
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
@@ -372,7 +362,7 @@ app.post('/api/products', authMiddleware, async (req, res) => {
     if (await Product.findOne({ tenantId: req.tenantId, code })) return res.status(409).json({ error: 'Streckkod finns redan' });
     const cleanPrice = Math.max(0, parseFloat(price) || 0);
     const product = await Product.create({ tenantId: req.tenantId, name, code, qty: qty||0, min: min||5, critical: critical||2, orderQty: orderQty||10, articleNo: textField(articleNo), supplier: textField(supplier), price: cleanPrice });
-    await addLog(req.tenantId, `Ny produkt tillagd: ${name}`);
+    await writeLog(req, `Ny produkt tillagd: ${name}`);
     res.json(product);
   } catch (err) { serverError(res, err); }
 });
@@ -401,7 +391,7 @@ app.delete('/api/products/:id', authMiddleware, async (req, res) => {
   try {
     const product = await Product.findOneAndDelete({ _id: req.params.id, tenantId: req.tenantId });
     if (!product) return res.status(404).json({ error: 'Produkt hittades inte' });
-    await addLog(req.tenantId, `Produkt borttagen: ${product.name}`);
+    await writeLog(req, `Produkt borttagen: ${product.name}`);
     res.json({ ok: true });
   } catch (err) { serverError(res, err); }
 });
@@ -441,7 +431,7 @@ app.post('/api/products/:id/print-label', authMiddleware, async (req, res) => {
     if (!product) return res.status(404).json({ error: 'Produkt hittades inte' });
     const tenant = await Tenant.findById(req.tenantId);
     await printLabel(product, tenant?.settings || {});
-    await addLog(req.tenantId, `Etikett utskriven: ${product.name}`);
+    await writeLog(req, `Etikett utskriven: ${product.name}`);
     res.json({ ok: true });
   } catch (err) { res.status(400).json({ error: mail.safeErrorMessage(err, [process.env.SMTP_PASSWORD]) || 'Utskrift misslyckades' }); }
 });
@@ -455,7 +445,7 @@ app.post('/api/scan', authMiddleware, checkTenantActive, requirePermission('scan
     const { code } = req.body;
     const trimmed = code?.trim();
     const existing = await Product.findOne({ tenantId: req.tenantId, code: trimmed });
-    if (!existing) { await addLog(req.tenantId, `Okänd streckkod: ${code}`, 'warn'); return res.status(404).json({ error: `Okänd streckkod: ${code}` }); }
+    if (!existing) { await writeLog(req, `Okänd streckkod: ${code}`, 'warn'); return res.status(404).json({ error: `Okänd streckkod: ${code}` }); }
     // Atomisk minskning — förhindrar race condition och negativt lager
     const p = await Product.findOneAndUpdate(
       { tenantId: req.tenantId, code: trimmed, qty: { $gt: 0 } },
@@ -463,13 +453,13 @@ app.post('/api/scan', authMiddleware, checkTenantActive, requirePermission('scan
       { new: true }
     );
     if (!p) return res.status(400).json({ error: `${existing.name} är slut på lager` });
-    await addLog(req.tenantId, `Uttag: ${p.name} (kvar: ${p.qty})${req.actor ? ` — ${req.actor.name}` : ''}`);
+    await writeLog(req, `Uttag: ${p.name} (kvar: ${p.qty})${req.actor ? ` — ${req.actor.name}` : ''}`);
     let orderCreated = false;
     if (p.qty <= p.min) {
       const exists = await Order.findOne({ tenantId: req.tenantId, productId: p._id, sent: false });
       if (!exists) {
         await Order.create({ tenantId: req.tenantId, productId: p._id, name: p.name, code: p.code, orderQty: p.orderQty, supplier: p.supplier, articleNo: p.articleNo });
-        await addLog(req.tenantId, `BESTÄLLNING skapad: ${p.name}`, 'order');
+        await writeLog(req, `BESTÄLLNING skapad: ${p.name}`, 'order');
         orderCreated = true;
       }
     }
@@ -487,8 +477,8 @@ app.post('/api/scan', authMiddleware, checkTenantActive, requirePermission('scan
         const now = new Date().toLocaleString('sv-SE');
         const text = `KRITISK LAGERVARNING — ${s.workshop}\n${now}\n\nProdukten "${p.name}" har nått kritisk lagernivå!\n\n  Aktuellt antal:    ${p.qty} st\n  Kritisk nivå:      ${p.critical} st\n  Artikelnummer:  ${p.articleNo||'—'}\n  Leverantör:       ${p.supplier||'—'}\n  Streckkod:        ${p.code}\n\nÅtgärd krävs omgående!\n\nVänliga hälsningar,\nScanny — ${s.workshop}`;
         mail.sendTenantMail(s, { to: recipients.join(', '), subject: `⚠️ KRITISKT: ${p.name} — ${s.workshop}`, text })
-          .then(() => addLog(req.tenantId, `KRITISK — e-post skickad: ${p.name}`, 'order'))
-          .catch(err => addLog(req.tenantId, `E-post misslyckades: ${mail.safeErrorMessage(err, [s.smtpPass, process.env.SMTP_PASSWORD, process.env.ACS_EMAIL_CONNECTION_STRING, process.env.MONGODB_URI])}`, 'warn'));
+          .then(() => writeLog(req, `KRITISK — e-post skickad: ${p.name}`, 'order'))
+          .catch(err => writeLog(req, `E-post misslyckades: ${mail.safeErrorMessage(err, [s.smtpPass, process.env.SMTP_PASSWORD, process.env.ACS_EMAIL_CONNECTION_STRING, process.env.MONGODB_URI])}`, 'warn'));
       }
     }
     res.json({ product: p, orderCreated, criticalAlert });
@@ -504,8 +494,8 @@ app.post('/api/add', authMiddleware, checkTenantActive, requirePermission('add',
       { $inc: { qty: 1 } },
       { new: true }
     );
-    if (!p) { await addLog(req.tenantId, `Okänd streckkod: ${code}`, 'warn'); return res.status(404).json({ error: `Okänd streckkod: ${code}` }); }
-    await addLog(req.tenantId, `Påfyllning: ${p.name} (nu ${p.qty})${req.actor ? ` — ${req.actor.name}` : ''}`);
+    if (!p) { await writeLog(req, `Okänd streckkod: ${code}`, 'warn'); return res.status(404).json({ error: `Okänd streckkod: ${code}` }); }
+    await writeLog(req, `Påfyllning: ${p.name} (nu ${p.qty})${req.actor ? ` — ${req.actor.name}` : ''}`);
     // Automatisk etikett är ett tillägg. Svaret skickas som tidigare, utan att vänta på kön.
     // Ett fel i kön får inte ändra inleveransen.
     try {
@@ -536,7 +526,7 @@ app.post('/api/orders/send', authMiddleware, async (req, res) => {
     if (!pending.length) return res.status(400).json({ error: 'Inga aktiva beställningar' });
     await sendOrderEmail(tenant.settings, pending);
     await Order.updateMany({ tenantId: req.tenantId, sent: false }, { sent: true });
-    await addLog(req.tenantId, `Beställning skickad (${pending.length} artiklar)`, 'order');
+    await writeLog(req, `Beställning skickad (${pending.length} artiklar)`, 'order');
     res.json({ ok: true, sent: pending.length });
   } catch (err) { serverError(res, err); }
 });
@@ -544,7 +534,7 @@ app.post('/api/orders/send', authMiddleware, async (req, res) => {
 app.post('/api/orders/mark-sent', authMiddleware, async (req, res) => {
   try {
     const result = await Order.updateMany({ tenantId: req.tenantId, sent: false }, { sent: true });
-    await addLog(req.tenantId, `${result.modifiedCount} beställningar markerade som skickade`, 'order');
+    await writeLog(req, `${result.modifiedCount} beställningar markerade som skickade`, 'order');
     res.json({ ok: true });
   } catch (err) { serverError(res, err); }
 });
@@ -553,7 +543,7 @@ app.patch('/api/orders/:id/sent', authMiddleware, async (req, res) => {
   try {
     const order = await Order.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, { sent: true }, { new: true });
     if (!order) return res.status(404).json({ error: 'Order hittades inte' });
-    await addLog(req.tenantId, `Order markerad som skickad: ${order.name}`, 'order');
+    await writeLog(req, `Order markerad som skickad: ${order.name}`, 'order');
     res.json({ ok: true });
   } catch (err) { serverError(res, err); }
 });
@@ -569,7 +559,7 @@ app.post('/api/inventory-report', authMiddleware, checkTenantActive, requirePerm
     const planTenant = await Tenant.findById(req.tenantId);
     if (!planOf(planTenant).inventoryReports) return res.json({ ok: true, sent: false, note: 'Inventeringsrapport ingår inte i din plan' });
     const diffs = entries.filter(e => e.scanned !== e.previous);
-    await addLog(req.tenantId, `Inventering: ${entries.length} artiklar, ${diffs.length} differenser${req.actor ? ` — ${req.actor.name}` : ''}`, 'order');
+    await writeLog(req, `Inventering: ${entries.length} artiklar, ${diffs.length} differenser${req.actor ? ` — ${req.actor.name}` : ''}`, 'order');
     // Spara rapport i historiken
     const rNow = new Date();
     await InventoryReport.create({
@@ -579,6 +569,7 @@ app.post('/api/inventory-report', authMiddleware, checkTenantActive, requirePerm
       total:     entries.length,
       diffCount: diffs.length,
       actorName: req.actor?.name || '',
+      ...userLink.actorFields(req.actor),
       entries
     }).catch(() => {});
     const tenant = await Tenant.findById(req.tenantId);
@@ -605,7 +596,8 @@ app.get('/api/users', authMiddleware, async (req, res) => {
 
 app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
   try {
-    const { name, color, permissions, pin } = req.body;
+    const { color, permissions, pin } = req.body;
+    const name = userLink.trimName(req.body?.name);
     if (!name) return res.status(400).json({ error: 'Namn krävs' });
     let pinHash = '';
     if (pin) {
@@ -623,14 +615,10 @@ app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
     const user = await User.create({
       tenantId: req.tenantId, name,
       email: fakeEmail, password: hashed, pin: pinHash,
-      role: 'staff', color: color || randomColor(), initials: name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2),
-      permissions: permissions ? {
-        canScan: permissions.canScan ?? permissions.scan ?? true,
-        canAdd: permissions.canAdd ?? permissions.add ?? false,
-        canInventory: permissions.canInventory ?? permissions.inventory ?? false,
-      } : { canScan: true, canAdd: false, canInventory: false }
+      role: 'staff', color: color || randomColor(), initials: userLink.initialsOf(name),
+      permissions: permissions ? userLink.normalizePermissions(permissions) : { canScan: true, canAdd: false, canInventory: false }
     });
-    await addLog(req.tenantId, `Ny användare: ${name}`);
+    await writeLog(req, `Ny användare: ${name}`);
     res.json({ id: user._id, name: user.name, color: user.color, permissions: user.permissions, hasPin: !!user.pin });
   } catch (err) { serverError(res, err); }
 });
@@ -642,19 +630,39 @@ function randomColor() {
 
 app.patch('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
   try {
-    const update = { ...req.body };
-    if (update.password) { update.password = await bcrypt.hash(update.password, 12); }
-    if (update.pin !== undefined) {
-      if (update.pin === '' || update.pin === null) {
-        update.pin = '';   // ta bort PIN
-      } else if (/^\d{4}$/.test(String(update.pin))) {
-        update.pin = await bcrypt.hash(String(update.pin), 12);
+    if (!/^[a-fA-F0-9]{24}$/.test(String(req.params.id))) {
+      return res.status(404).json({ error: 'Användare hittades inte' });
+    }
+    const user = await User.findOne({ _id: req.params.id, tenantId: req.tenantId });
+    if (!user) return res.status(404).json({ error: 'Användare hittades inte' });
+    const body = req.body || {};
+
+    if (userLink.isPinOnlyPatch(body)) {
+      if (body.pin === '' || body.pin === null) {
+        user.pin = '';
+      } else if (/^\d{4}$/.test(String(body.pin))) {
+        user.pin = await bcrypt.hash(String(body.pin), 12);
       } else {
         return res.status(400).json({ error: 'PIN måste vara 4 siffror' });
       }
+      await user.save();
+      return res.json(redact.sanitizeUser(user));
     }
-    const user = await User.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, update, { new: true });
-    if (!user) return res.status(404).json({ error: 'Användare hittades inte' });
+
+    if (body.name === undefined && body.permissions === undefined) {
+      return res.status(400).json({ error: 'Inget att uppdatera' });
+    }
+
+    const applied = userLink.applyProfile(user, body);
+    if (!applied.ok) return res.status(applied.status).json({ error: applied.error });
+    const oldName = user.name;
+    user.name = applied.name;
+    user.initials = applied.initials;
+    user.permissions = applied.permissions;
+    user.markModified('permissions');
+    await user.save();
+    const actor = await getActor(req);
+    await addLog(req.tenantId, userLink.changeMessage(oldName, user.name, user.permissions, actor), 'normal', actor);
     res.json(redact.sanitizeUser(user));
   } catch (err) { serverError(res, err); }
 });
@@ -663,7 +671,7 @@ app.delete('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
   try {
     const user = await User.findOneAndDelete({ _id: req.params.id, tenantId: req.tenantId });
     if (!user) return res.status(404).json({ error: 'Användare hittades inte' });
-    await addLog(req.tenantId, `Användare borttagen: ${user.name}`);
+    await writeLog(req, `Användare borttagen: ${user.name}`);
     res.json({ ok: true });
   } catch (err) { serverError(res, err); }
 });
@@ -674,7 +682,11 @@ app.delete('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
 
 app.get('/api/vehicles', authMiddleware, async (req, res) => {
   try {
-    res.json(await Vehicle.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(10000));
+    const [vehicles, users] = await Promise.all([
+      Vehicle.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(10000),
+      userIndex(req.tenantId)
+    ]);
+    res.json(vehicles.map(vehicle => userLink.presentVehicle(vehicle, users)));
   } catch (err) { serverError(res, err); }
 });
 
@@ -683,7 +695,7 @@ app.post('/api/vehicles', authMiddleware, async (req, res) => {
     const { regNr, make, model, color, customerName, customerContact } = req.body;
     if (!regNr) return res.status(400).json({ error: 'Reg-nr krävs' });
     const vehicle = await Vehicle.create({ tenantId: req.tenantId, regNr: regNr.toUpperCase(), make, model, color, customerName, customerContact });
-    await addLog(req.tenantId, `Fordon tillagt: ${regNr}`);
+    await writeLog(req, `Fordon tillagt: ${regNr}`);
     res.json(vehicle);
   } catch (err) { serverError(res, err); }
 });
@@ -692,7 +704,7 @@ app.delete('/api/vehicles/:id', authMiddleware, async (req, res) => {
   try {
     const v = await Vehicle.findOneAndDelete({ _id: req.params.id, tenantId: req.tenantId });
     if (!v) return res.status(404).json({ error: 'Fordon hittades inte' });
-    await addLog(req.tenantId, `Fordon borttaget: ${v.regNr}`);
+    await writeLog(req, `Fordon borttaget: ${v.regNr}`);
     res.json({ ok: true });
   } catch (err) { serverError(res, err); }
 });
@@ -711,7 +723,16 @@ app.post('/api/vehicles/:id/log', authMiddleware, async (req, res) => {
     const v = await Vehicle.findOne({ _id: req.params.id, tenantId: req.tenantId });
     if (!v) return res.status(404).json({ error: 'Fordon hittades inte' });
     if (v.archived) return res.status(400).json({ error: 'Fordonet är arkiverat' });
-    v.history.unshift({ time: new Date().toLocaleString('sv-SE'), productName, qty: qty||1, userName: userName||'—', articleNo: articleNo||'—', supplier: supplier||'—' });
+    const actor = req.actor || await getActor(req);
+    v.history.unshift({
+      time: new Date().toLocaleString('sv-SE'),
+      productName,
+      qty: qty || 1,
+      userName: actor?.name || userName || '—',
+      articleNo: articleNo || '—',
+      supplier: supplier || '—',
+      ...userLink.actorFields(actor)
+    });
     if (v.history.length > 500) v.history = v.history.slice(0, 500);
     await v.save();
     res.json({ ok: true });
@@ -722,7 +743,7 @@ app.patch('/api/vehicles/:id/archive', authMiddleware, async (req, res) => {
   try {
     const v = await Vehicle.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, { archived: true, archivedAt: new Date().toLocaleString('sv-SE') }, { new: true });
     if (!v) return res.status(404).json({ error: 'Fordon hittades inte' });
-    await addLog(req.tenantId, `Fordon arkiverat: ${v.regNr}`, 'order');
+    await writeLog(req, `Fordon arkiverat: ${v.regNr}`, 'order');
     res.json({ ok: true });
   } catch (err) { serverError(res, err); }
 });
@@ -731,7 +752,7 @@ app.patch('/api/vehicles/:id/unarchive', authMiddleware, async (req, res) => {
   try {
     const v = await Vehicle.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, { archived: false, $unset: { archivedAt: '' } }, { new: true });
     if (!v) return res.status(404).json({ error: 'Fordon hittades inte' });
-    await addLog(req.tenantId, `Fordon återöppnat: ${v.regNr}`);
+    await writeLog(req, `Fordon återöppnat: ${v.regNr}`);
     res.json({ ok: true });
   } catch (err) { serverError(res, err); }
 });
@@ -791,7 +812,7 @@ app.post('/api/settings/test-alert', authMiddleware, adminOnly, async (req, res)
       subject: 'Testmejl från Scanny — lagerlarm',
       text: `Det här är ett test av lagerlarm från Scanny${workshop ? ` (${workshop})` : ''}.\n\nOm du läser det här når kritiska lagervarningar den här adressen.\n\nVänliga hälsningar,\nScanny`
     });
-    await addLog(req.tenantId, `Testmejl för lagerlarm skickat (${channel})`, 'order');
+    await writeLog(req, `Testmejl för lagerlarm skickat (${channel})`, 'order');
     res.json({ ok: true, sent: decision.recipients.length, channel });
   } catch (err) {
     console.error('[FEL] testmejl:', mail.safeErrorMessage(err, [smtpPass, process.env.SMTP_PASSWORD, process.env.ACS_EMAIL_CONNECTION_STRING]));
@@ -805,14 +826,21 @@ app.post('/api/settings/test-alert', authMiddleware, adminOnly, async (req, res)
 
 app.get('/api/logs', authMiddleware, async (req, res) => {
   try {
-    const logs = await Log.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(100);
-    res.json(logs.map(redact.publicLog));
+    const [logs, users] = await Promise.all([
+      Log.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(100),
+      userIndex(req.tenantId)
+    ]);
+    res.json(logs.map(log => redact.publicLog(userLink.presentLog(log, users))));
   } catch (err) { serverError(res, err); }
 });
 
 app.get('/api/inventory-reports', authMiddleware, async (req, res) => {
   try {
-    res.json(await InventoryReport.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(50));
+    const [reports, users] = await Promise.all([
+      InventoryReport.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(50),
+      userIndex(req.tenantId)
+    ]);
+    res.json(reports.map(report => userLink.presentInventoryReport(report, users)));
   } catch (err) { serverError(res, err); }
 });
 
@@ -825,6 +853,7 @@ app.get('/api/vehicles/:id/export', authMiddleware, async (req, res) => {
     }
     const v = await Vehicle.findOne({ _id: req.params.id, tenantId: req.tenantId });
     if (!v) return res.status(404).json({ error: 'Fordon hittades inte' });
+    const exportUsers = await userIndex(req.tenantId);
     const since = req.query.since;
     let history = v.history || [];
     if (since && since !== 'all') {
@@ -849,7 +878,8 @@ app.get('/api/vehicles/:id/export', authMiddleware, async (req, res) => {
       const qty = Number(h.qty) || 0;
       const line = price * qty;
       total += line;
-      return `<tr><td>${escHtml(h.time)}</td><td>${escHtml(h.productName)}</td><td style="text-align:right">${escHtml(h.qty)}</td><td>${escHtml(h.articleNo||'—')}</td><td>${escHtml(h.supplier||'—')}</td><td>${escHtml(h.userName||'—')}</td><td style="text-align:right">${fmt(price)}</td><td style="text-align:right">${fmt(line)}</td></tr>`;
+      const who = userLink.displayUserName(h.userId, h.userName, exportUsers);
+      return `<tr><td>${escHtml(h.time)}</td><td>${escHtml(h.productName)}</td><td style="text-align:right">${escHtml(h.qty)}</td><td>${escHtml(h.articleNo||'—')}</td><td>${escHtml(h.supplier||'—')}</td><td>${escHtml(who)}</td><td style="text-align:right">${fmt(price)}</td><td style="text-align:right">${fmt(line)}</td></tr>`;
     }).join('');
     const totalRow = `<tr><td colspan="7" style="text-align:right;font-weight:700;border-top:2px solid #ccc">Total materialkostnad</td><td style="text-align:right;font-weight:700;border-top:2px solid #ccc">${fmt(total)} kr</td></tr>`;
     const html = `<!DOCTYPE html><html lang="sv"><head><meta charset="UTF-8"><title>Export — ${escHtml(v.regNr)}</title>
@@ -927,7 +957,7 @@ app.post('/api/products/import', authMiddleware, adminOnly, importLimiter, expre
         else { await Product.create({ tenantId: req.tenantId, code, ...fields }); created++; }
       } catch (e) { skipped++; errors.push(`Rad ${i + 1} (${code}): ${mail.safeErrorMessage(e, [process.env.MONGODB_URI, process.env.SMTP_PASSWORD])}`); }
     }
-    await addLog(req.tenantId, `CSV-import: ${created} nya, ${updated} uppdaterade, ${skipped} \u00F6verhoppade`);
+    await writeLog(req, `CSV-import: ${created} nya, ${updated} uppdaterade, ${skipped} \u00F6verhoppade`);
     res.json({ ok: true, created, updated, skipped, errors: errors.slice(0, 20) });
   } catch (err) { serverError(res, err); }
 });
@@ -948,8 +978,20 @@ app.get('/api/db', authMiddleware, checkTenantActive, async (req, res) => {
       InventoryReport.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(50)
     ]);
     const settings = mail.publicSettings(tenant?.settings?.toObject());
-    res.json({ products, orders, users: users.map(redact.sanitizeUser), vehicles, logs: logs.map(redact.publicLog), settings, inventoryReports,
-      plan: tenant?.plan || 'bas', planLimits: planLimitsPublic(tenant), usage: { users: users.length } });
+    const safeUsers = users.map(redact.sanitizeUser);
+    const names = userLink.indexUsers(safeUsers);
+    res.json({
+      products,
+      orders,
+      users: safeUsers,
+      vehicles: vehicles.map(vehicle => userLink.presentVehicle(vehicle, names)),
+      logs: logs.map(log => redact.publicLog(userLink.presentLog(log, names))),
+      settings,
+      inventoryReports: inventoryReports.map(report => userLink.presentInventoryReport(report, names)),
+      plan: tenant?.plan || 'bas',
+      planLimits: planLimitsPublic(tenant),
+      usage: { users: users.length }
+    });
   } catch (err) { serverError(res, err); }
 });
 
