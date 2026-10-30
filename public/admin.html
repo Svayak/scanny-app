@@ -268,7 +268,13 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
         Tillbaka till Admin
       </button>
-      <div class="page-header"><h1>Händelselogg</h1></div>
+      <div class="page-header">
+        <h1>Händelselogg</h1>
+        <label for="log-user-filter" style="font-size:13px;color:var(--text2);display:flex;align-items:center;gap:8px">Användare
+          <select id="log-user-filter" onchange="renderLog()" style="min-width:180px"></select>
+        </label>
+      </div>
+      <div id="log-user-stats" style="font-size:13px;color:var(--text2);min-height:1.2em;margin:-0.25rem 0 0.75rem"></div>
       <div class="log-list" id="log-list"></div>
     </div>
 
@@ -480,6 +486,27 @@
   </div>
 </div>
 
+<!-- ── MODAL: Redigera användare ── -->
+<div class="modal-overlay" id="user-edit-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="user-edit-title">
+  <div class="modal-box">
+    <div class="modal-body">
+      <h2 class="modal-title" id="user-edit-title">Redigera användare</h2>
+      <input type="hidden" id="eu-id">
+      <div class="form-group"><label for="eu-name">Namn *</label><input id="eu-name" placeholder="Anna Andersson"></div>
+      <h3 style="margin-top:1rem;font-size:13px">Behörigheter</h3>
+      <div class="modal-grid-3" style="margin-top:.5rem">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;min-width:0"><input type="checkbox" id="eu-perm-scan"> Uttag</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;min-width:0"><input type="checkbox" id="eu-perm-add"> Addera</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;min-width:0"><input type="checkbox" id="eu-perm-inv"> Inventering</label>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" style="flex:1" onclick="closeEditUserModal()">Avbryt</button>
+      <button class="btn btn-primary" style="flex:2" onclick="saveEditUser()">Spara</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── MODAL: Redigera produkt ── -->
 <div class="modal-overlay" id="edit-modal" style="display:none" role="dialog" aria-modal="true">
   <div class="modal-box">
@@ -592,6 +619,7 @@ if (kioskLinkEl && slug) kioskLinkEl.href = '/kiosk/' + slug;
 <script src="https://unpkg.com/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
 <script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
 <script src="/js/product-search.js?v=__APP_VERSION__"></script>
+<script src="/js/user-link.js?v=__APP_VERSION__"></script>
 <script src="/js/kiosk-update.js?v=__APP_VERSION__"></script>
 <script src="/js/scan-wedge.js?v=__APP_VERSION__"></script>
 <script src="/js/app.js?v=__APP_VERSION__"></script>

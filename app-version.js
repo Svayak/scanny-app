@@ -9,6 +9,7 @@ const FILES = [
   'public/js/scan-wedge.js',
   'public/js/kiosk-update.js',
   'public/js/product-search.js',
+  'public/js/user-link.js',
   'public/js/mode-timer.js',
   'public/css/style.css',
   'public/sw.js'
