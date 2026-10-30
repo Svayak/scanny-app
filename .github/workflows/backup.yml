@@ -10,11 +10,19 @@ permissions:
 
 jobs:
   backup:
-    runs-on: [self-hosted, linux, x64, box]
+    # Box-runnerns nätverk släpper inte igenom MongoDB-trafik (port 10260), så backupen
+    # körs på GitHub-hostad runner (~1 min/dygn).
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # mongodump och az är förinstallerade på box-runnern (~/.local/bin).
+      - name: Install mongodump
+        run: |
+          set -euo pipefail
+          curl -fsSL -o tools.deb https://fastdl.mongodb.org/tools/db/mongodb-database-tools-ubuntu2404-x86_64-100.10.0.deb
+          sudo apt-get install -y ./tools.deb >/dev/null
+          rm -f tools.deb
+
       - name: Check tools
         run: |
           mongodump --version | head -1
@@ -40,7 +48,7 @@ jobs:
             set -e
             [ "$code" -eq 0 ] && break
             echo "mongodump attempt $attempt failed (exit $code)"
-            [ "$attempt" -lt 3 ] && sleep $((attempt * 15))
+            if [ "$attempt" -lt 3 ]; then sleep $((attempt * 15)); fi
           done
           node scripts/scrub-stream.js "$errfile" "$code"
 
