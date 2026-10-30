@@ -19,3 +19,9 @@ credentials.json
 adr.txt
 test-label*.png
 preview-*.png
+
+# skrivarbryggan på verkstadsdatorn — nyckeln får inte in i git
+print_bridge/config.json
+print_bridge/bridge.log
+__pycache__/
+*.pyc

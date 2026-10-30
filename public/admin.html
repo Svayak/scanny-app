@@ -332,6 +332,29 @@
         </div>
         <div style="margin-top:1rem"><button class="btn btn-primary" onclick="saveSettings()">Spara skrivare</button></div>
       </div>
+      <div class="card" style="margin-top:1rem" id="print-bridge-card">
+        <h3>Automatisk etikettskrivare</h3>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:1rem">Valfritt och avstängt från start. När det är på skickar surfplattan etiketter till Brother QL-810Wc (DK-11209, 62 × 29 mm) via bryggan på verkstadsdatorn. Utskrift via webbläsarens dialog fungerar som tidigare, även när det här är av.</p>
+        <div class="form-group">
+          <label for="pb-enabled">Automatisk etikettutskrift</label>
+          <select id="pb-enabled" onchange="onPrintBridgeEnabled()" style="padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-size:13px;outline:none">
+            <option value="off" selected>AV</option>
+            <option value="on">PÅ</option>
+          </select>
+          <p id="pb-key-hint" class="field-hint">Skapa en bryggnyckel innan du slår på automatisk etikettutskrift.</p>
+        </div>
+        <p id="pb-status" class="field-hint" style="margin-top:.75rem">Brygga: inte konfigurerad.</p>
+        <div id="pb-key-once" hidden style="margin-top:.75rem;padding:.75rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2)">
+          <p style="font-size:13px;margin-bottom:.4rem">Kopiera nyckeln nu. Den visas bara den här gången.</p>
+          <code id="pb-key-value" style="display:block;font-size:13px;word-break:break-all"></code>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:1rem">
+          <button type="button" class="btn" id="pb-create" onclick="createBridgeKey()">Skapa bryggnyckel</button>
+          <button type="button" class="btn" id="pb-rotate" onclick="createBridgeKey()" hidden>Rotera nyckel</button>
+          <button type="button" class="btn" id="pb-revoke" onclick="revokeBridgeKey()" hidden>Återkalla nyckel</button>
+          <button type="button" class="btn" id="pb-test" onclick="testBridgePrint()">Testutskrift</button>
+        </div>
+      </div>
       <div class="card" style="margin-top:1rem" id="schedule-card">
         <h3>⏰ Schemalagd beställning</h3>
         <div id="schedule-upgrade" style="display:none;font-size:13px;color:var(--warn);margin-bottom:.75rem">🔒 Schemalagda beställningar ingår i Standard och Pro. Uppgradera för att aktivera.</div>

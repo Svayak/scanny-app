@@ -735,6 +735,7 @@ function renderLager() {
     '<td style="white-space:nowrap">' +
 	'<button class="btn btn-sm" onclick="showEditModal(\''+p.id+'\')">Redigera</button>'+
 	'<button class="btn btn-sm" onclick="printLabel(\''+p.id+'\')" title="Skriv ut etikett">🏷 Etikett</button>'+
+	queueLabelButton(p.id) +
 	'<button class="btn btn-sm btn-danger" onclick="deleteProduct(\''+p.id+'\')">Ta bort</button>'+
     '</td></tr>'
   ).join('');
@@ -955,6 +956,8 @@ function renderSettings() {
   // Etikettskrivare
   const sizeEl = document.getElementById('s-label-size');
   if (sizeEl) sizeEl.value = s.labelSize || '62x29';
+  renderPrintBridge();
+  maybeRefreshPrintBridge();
 
   // Schema
   const dayEl  = document.getElementById('s-schedule-day');
@@ -1342,6 +1345,37 @@ function printLabel(id) {
   if (renderLabel(p)) setTimeout(() => window.print(), 120);
 }
 
+// Knappen visas bara när automatisk utskrift är på. Webbläsarens etikettknapp finns kvar.
+function currentRole() {
+  try {
+    const part = (getToken() || '').split('.')[1];
+    if (!part) return '';
+    const padded = part.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = padded + '='.repeat((4 - (padded.length % 4)) % 4);
+    const json = JSON.parse(atob(pad));
+    return json && json.role ? json.role : '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function bridgePrintReady() {
+  const b = db.settings && db.settings.printBridge;
+  return !!(b && b.enabled && b.configured);
+}
+
+function queueLabelButton(id) {
+  if (!bridgePrintReady()) return '';
+  return '<button class="btn btn-sm" onclick="queueLabel(\'' + id + '\')">Skriv ut etikett</button>';
+}
+
+async function queueLabel(id) {
+  try {
+    await api('POST', '/api/products/' + id + '/queue-label');
+    toast('Etikett skickad till skrivaren');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
 // Öppnar en förhandsvisning av etiketten i nytt fönster (för test utan att skriva ut).
 async function previewLabel(id) {
   try {
@@ -1422,6 +1456,151 @@ async function addProduct() {
 // ═══════════════════════════════════════════════════════════════
 //  Inställningar
 // ═══════════════════════════════════════════════════════════════
+async function printApi(method, path, body) {
+  const token = getToken();
+  const res = await fetch(path, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: 'Bearer ' + token } : {})
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) { clearToken(); window.location.href = '/login'; return null; }
+  if (!res.ok) throw new Error(data.error || 'Serverfel');
+  return data;
+}
+
+let pbRefreshAt = 0;
+
+function renderPrintBridge() {
+  const b = (db.settings && db.settings.printBridge) || {};
+  const admin = currentRole() === 'admin';
+  const enabled = document.getElementById('pb-enabled');
+  if (enabled) {
+    enabled.value = b.enabled ? 'on' : 'off';
+    enabled.disabled = !admin;
+  }
+  const hint = document.getElementById('pb-key-hint');
+  if (hint) hint.hidden = !!b.configured;
+  const status = document.getElementById('pb-status');
+  if (status) status.textContent = bridgeStatusText(b);
+  const configured = !!b.configured;
+  const createBtn = document.getElementById('pb-create');
+  const rotateBtn = document.getElementById('pb-rotate');
+  const revokeBtn = document.getElementById('pb-revoke');
+  if (createBtn) { createBtn.hidden = configured; createBtn.disabled = !admin; }
+  if (rotateBtn) { rotateBtn.hidden = !configured; rotateBtn.disabled = !admin; }
+  if (revokeBtn) { revokeBtn.hidden = !configured; revokeBtn.disabled = !admin; }
+  const testBtn = document.getElementById('pb-test');
+  if (testBtn) testBtn.disabled = !admin;
+  const box = document.getElementById('pb-key-once');
+  const val = document.getElementById('pb-key-value');
+  if (box && val && !val.textContent) box.hidden = true;
+}
+
+function bridgeStatusText(b) {
+  if (!b || !b.configured) return 'Brygga: ingen nyckel. Automatisk utskrift är av.';
+  const prefix = b.keyPrefix ? ' Nyckel ' + b.keyPrefix + '….' : '';
+  if (!b.enabled) return 'Brygga: nyckel finns men automatisk utskrift är av.' + prefix;
+  if (b.online) {
+    let text = 'Brygga: online.' + prefix;
+    if (b.printerName) text += ' Kö: ' + b.printerName + '.';
+    if (b.printerStatus && b.printerStatus !== 'ok') {
+      text += ' Skrivarstatus: ' + b.printerStatus + (b.printerDetail ? ' (' + b.printerDetail + ')' : '') + '.';
+    } else {
+      text += ' Skrivaren svarar.';
+    }
+    return text;
+  }
+  const when = b.lastHeartbeatAt
+    ? ' Senaste livstecken: ' + new Date(b.lastHeartbeatAt).toLocaleString('sv-SE') + '.'
+    : ' Inget livstecken ännu.';
+  return 'Brygga: offline.' + prefix + when;
+}
+
+function maybeRefreshPrintBridge() {
+  const panel = document.getElementById('tab-settings');
+  if (!panel || !panel.classList.contains('active')) return;
+  if (!document.getElementById('pb-status')) return;
+  const now = Date.now();
+  if (now - pbRefreshAt < 5000) return;
+  pbRefreshAt = now;
+  refreshPrintBridgeStatus();
+}
+
+async function refreshPrintBridgeStatus() {
+  try {
+    const b = await printApi('GET', '/api/print/status');
+    if (!b) return;
+    db.settings = db.settings || {};
+    db.settings.printBridge = b;
+    renderPrintBridge();
+  } catch (_) { /* behåll senaste kända läge */ }
+}
+
+function showBridgeKeyOnce(key) {
+  const box = document.getElementById('pb-key-once');
+  const val = document.getElementById('pb-key-value');
+  if (val) val.textContent = key || '';
+  if (box) box.hidden = !key;
+}
+
+async function onPrintBridgeEnabled() {
+  const el = document.getElementById('pb-enabled');
+  const hint = document.getElementById('pb-key-hint');
+  if (!el) return;
+  const wantOn = el.value === 'on';
+  const configured = !!(db.settings && db.settings.printBridge && db.settings.printBridge.configured);
+  if (wantOn && !configured) {
+    el.value = 'off';
+    if (hint) hint.hidden = false;
+    toast('Skapa en bryggnyckel innan du slår på automatisk etikettutskrift.', 'error');
+    return;
+  }
+  try {
+    await printApi('PUT', '/api/print/settings', { enabled: wantOn });
+    if (hint) hint.hidden = true;
+    toast(wantOn ? 'Automatisk etikettutskrift är på' : 'Automatisk etikettutskrift är av');
+    pbRefreshAt = 0;
+    await loadAll();
+  } catch (err) {
+    el.value = wantOn ? 'off' : 'on';
+    if (hint && /bryggnyckel/.test(err.message || '')) hint.hidden = false;
+    toast(err.message, 'error');
+  }
+}
+
+async function createBridgeKey() {
+  try {
+    const res = await printApi('POST', '/api/print/key');
+    if (!res) return;
+    showBridgeKeyOnce(res.key);
+    toast(res.message || 'Nyckel skapad. Kopiera den nu — den visas bara en gång.');
+    pbRefreshAt = 0;
+    await loadAll();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function revokeBridgeKey() {
+  if (!confirm('Återkalla bryggnyckeln? Automatisk utskrift stängs av tills du skapar en ny nyckel.')) return;
+  try {
+    await printApi('DELETE', '/api/print/key');
+    showBridgeKeyOnce('');
+    toast('Nyckeln är återkallad');
+    pbRefreshAt = 0;
+    await loadAll();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function testBridgePrint() {
+  try {
+    await printApi('POST', '/api/print/test');
+    toast('Testetikett skickad till skrivaren');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
 async function saveSettings() {
   const dayVal = document.getElementById('s-schedule-day').value;
   const alertEl = document.getElementById('s-alert-email');

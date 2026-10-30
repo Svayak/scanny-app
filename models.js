@@ -22,9 +22,22 @@ const tenantSchema = new mongoose.Schema({
     printerModel: { type: String, default: 'QL-810W' },
     labelSize:    { type: String, default: '29x90' },
     printerQueue: { type: String, default: '_192_168_10_164' },
-    pageSize:     { type: String, default: 'DC03' }
+    pageSize:     { type: String, default: 'DC03' },
+    // Automatisk utskrift är av tills en admin skapar en bryggnyckel och slår på den.
+    // Saknade fält hos befintliga verkstäder betyder avstängt.
+    printBridge: {
+      enabled:          { type: Boolean, default: false },
+      keyHash:          { type: String, default: '' },
+      keyPrefix:        { type: String, default: '' },
+      keyCreatedAt:     { type: Date },
+      lastHeartbeatAt:  { type: Date },
+      printerStatus:    { type: String, default: '' },
+      printerDetail:    { type: String, default: '' },
+      printerName:      { type: String, default: '' }
+    }
   }
 });
+tenantSchema.index({ 'settings.printBridge.keyHash': 1 });
 
 // ── Användare ──
 const userSchema = new mongoose.Schema({
@@ -110,6 +123,24 @@ const inventoryReportSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
+// ── Utskriftskö (hämtas av den lokala bryggan) ──
+const printJobSchema = new mongoose.Schema({
+  tenantId:   { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true },
+  productId:  { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+  name:       { type: String, default: '' },
+  code:       { type: String, default: '' },
+  articleNo:  { type: String, default: '' },
+  labelSize:  { type: String, default: '62x29' },
+  source:     { type: String, enum: ['inleverans', 'manual', 'test'], default: 'manual' },
+  status:     { type: String, enum: ['pending', 'claimed', 'printed', 'failed', 'expired'], default: 'pending' },
+  error:      { type: String, default: '' },
+  createdAt:  { type: Date, default: Date.now },
+  claimedAt:  { type: Date },
+  finishedAt: { type: Date }
+});
+printJobSchema.index({ tenantId: 1, status: 1, createdAt: 1 });
+printJobSchema.index({ tenantId: 1, createdAt: 1 });
+
 module.exports = {
   Tenant:  mongoose.model('Tenant',  tenantSchema),
   User:    mongoose.model('User',    userSchema),
@@ -117,5 +148,6 @@ module.exports = {
   Order:   mongoose.model('Order',   orderSchema),
   Vehicle: mongoose.model('Vehicle', vehicleSchema),
   Log:     mongoose.model('Log',     logSchema),
-  InventoryReport: mongoose.model('InventoryReport', inventoryReportSchema)
+  InventoryReport: mongoose.model('InventoryReport', inventoryReportSchema),
+  PrintJob: mongoose.model('PrintJob', printJobSchema, 'print_jobs')
 };

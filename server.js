@@ -9,7 +9,7 @@ const cors       = require('cors');
 const helmet = require('helmet');
 const mongoSanitize = require('express-mongo-sanitize');
 const rateLimit = require('express-rate-limit');
-const { Tenant, User, Product, Order, Vehicle, Log, InventoryReport } = require('./models');
+const { Tenant, User, Product, Order, Vehicle, Log, InventoryReport, PrintJob } = require('./models');
 const mail = require('./mail');
 const allowTestAlert = mail.createRateLimiter({ windowMs: 15 * 60 * 1000, max: 5 });
 const ALLOWED_ORIGINS = ['https://scanny.se', 'https://www.scanny.se', 'http://localhost:3001'];
@@ -22,6 +22,7 @@ const { sendManifest } = require('./pwa');
 let generateLabelPng, printLabel;
 try { ({ generateLabelPng, printLabel } = require('./label')); }
 catch (err) { console.warn('Etikettmodul ej tillgänglig (bwip-js/sharp saknas?):', mail.safeErrorMessage(err)); }
+const { createPrintFeature, respondPrintError } = require('./print-api');
 
 // ── Paketnivåer (matchar priserna på landningssidan) ──
 const PLAN_LIMITS = {
@@ -166,6 +167,9 @@ function addLog(tenantId, msg, type = 'normal') {
     msg, type
   }).catch(() => {});
 }
+
+// Skrivarkö. Påverkar inte webbläsarens utskrift. Köas bara när verkstaden aktiverat bryggan.
+const printing = createPrintFeature({ Tenant, PrintJob, addLog });
 
 // Loggar felet internt men returnerar ett generiskt meddelande till klienten
 function serverError(res, err) {
@@ -386,6 +390,19 @@ app.get('/api/products/:id/label.png', authMiddleware, async (req, res) => {
   } catch (err) { serverError(res, err); }
 });
 
+// Köa en etikett till den lokala bryggan. Webbläsarens utskrift (window.print) är oförändrad.
+app.post('/api/products/:id/queue-label', authMiddleware, async (req, res) => {
+  try {
+    const product = await Product.findOne({ _id: req.params.id, tenantId: req.tenantId });
+    if (!product) return res.status(404).json({ error: 'Produkt hittades inte' });
+    const result = await printing.service.queueProduct(req.tenantId, product);
+    res.json(result);
+  } catch (err) {
+    if (respondPrintError(res, err)) return;
+    serverError(res, err);
+  }
+});
+
 // ── Etikett: skriv ut till Brother QL-810W ──
 app.post('/api/products/:id/print-label', authMiddleware, async (req, res) => {
   try {
@@ -459,6 +476,15 @@ app.post('/api/add', authMiddleware, checkTenantActive, requirePermission('add',
     );
     if (!p) { await addLog(req.tenantId, `Okänd streckkod: ${code}`, 'warn'); return res.status(404).json({ error: `Okänd streckkod: ${code}` }); }
     await addLog(req.tenantId, `Påfyllning: ${p.name} (nu ${p.qty})${req.actor ? ` — ${req.actor.name}` : ''}`);
+    // Automatisk etikett är ett tillägg. Svaret skickas som tidigare, utan att vänta på kön.
+    // Ett fel i kön får inte ändra inleveransen.
+    try {
+      Promise.resolve(printing.enqueueForGoodsReceipt(req.tenantId, p)).catch(err => {
+        console.warn('[print] Kunde inte köa etikett vid inleverans:', mail.safeErrorMessage(err));
+      });
+    } catch (err) {
+      console.warn('[print] Kunde inte köa etikett vid inleverans:', mail.safeErrorMessage(err));
+    }
     res.json({ product: p });
   } catch (err) { serverError(res, err); }
 });
@@ -694,6 +720,18 @@ app.put('/api/settings', authMiddleware, adminOnly, async (req, res) => {
     res.json({ ok: true });
   } catch (err) { serverError(res, err); }
 });
+
+// Status får läsas av inloggad personal (ingen nyckel lämnas ut). Ändringar kräver admin.
+app.get('/api/print/status', authMiddleware, async (req, res) => {
+  try {
+    res.json(await printing.service.statusFor(req.tenantId));
+  } catch (err) {
+    if (respondPrintError(res, err)) return;
+    serverError(res, err);
+  }
+});
+app.use('/api/print/v1', printing.bridgeRouter);
+app.use('/api/print', authMiddleware, adminOnly, printing.userRouter);
 
 app.post('/api/settings/test-alert', authMiddleware, adminOnly, async (req, res) => {
   let smtpPass = '';

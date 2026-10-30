@@ -1,4 +1,5 @@
 const { redactText, stripSensitive } = require('./redact');
+const { publicPrintBridge } = require('./print-api');
 
 const DISPLAY_NAME = 'Scanny';
 
@@ -9,6 +10,8 @@ const MAX_TEST_RECIPIENTS = 10;
 
 function applySettingsPatch(body) {
   const patch = { ...body };
+  // Bryggnyckel och skrivarstatus sätts bara via /api/print, aldrig via vanliga inställningar.
+  for (const key of ['printBridge', 'keyHash', 'bridgeKey', 'bridgeKeyHash']) delete patch[key];
   if (Object.prototype.hasOwnProperty.call(patch, 'alertEmail')) {
     const raw = patch.alertEmail;
     const text = Array.isArray(raw) ? raw.join(', ') : String(raw ?? '');
@@ -226,8 +229,14 @@ function createMailService(overrides = {}) {
   }
 
   function publicSettings(settingsObject) {
-    const s = stripSensitive({ ...(settingsObject || {}) });
+    const source = settingsObject || {};
+    const originalBridge = source.printBridge;
+    const s = stripSensitive({ ...source });
     delete s.smtpPass;
+    delete s.keyHash;
+    delete s.bridgeKey;
+    delete s.bridgeKeyHash;
+    s.printBridge = publicPrintBridge(originalBridge || {});
     s.smtpCentral = smtpCentral();
     return s;
   }

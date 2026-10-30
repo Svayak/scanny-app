@@ -1,0 +1,2 @@
+-r requirements.txt
+brother_ql>=0.9.4

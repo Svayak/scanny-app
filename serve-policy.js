@@ -8,7 +8,7 @@ const BLOCKED = /(?:^|\/)(?:\.(?:env(?:$|\.)|git(?:$|\/)|svn(?:$|\/)|hg(?:$|\/)|
 // någon gång pekar fel, eller om filen kopieras in i public/.
 const BLOCKED_FILES = new Set([
   'server.js', 'auth.js', 'mail.js', 'models.js', 'redact.js', 'serve-policy.js',
-  'label.js', 'pwa.js', 'package.json', 'package-lock.json', 'credentials.json',
+  'label.js', 'pwa.js', 'print-api.js', 'package.json', 'package-lock.json', 'credentials.json',
   'id_rsa', 'id_rsa.pub'
 ]);
 
