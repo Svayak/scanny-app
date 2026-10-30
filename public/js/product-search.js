@@ -27,22 +27,18 @@
     return FIELDS.some(key => fold(item[key]).includes(q));
   }
 
-  // $toString så att ett artikelnummer som sparats som tal också träffas.
+  // Vanliga fält-regex. Cosmos DB (Mongo API) avvisar $regexMatch när
+  // input inte redan är en sträng, vilket äldre artikelnummer (tal) inte är.
   function mongoProductFilter(query) {
     const q = fold(query);
     if (!q) return {};
     const pattern = escapeRegex(q);
-    return {
-      $expr: {
-        $or: FIELDS.map(key => ({
-          $regexMatch: {
-            input: { $toString: { $ifNull: ['$' + key, ''] } },
-            regex: pattern,
-            options: 'i'
-          }
-        }))
-      }
-    };
+    const or = FIELDS.map(key => ({ [key]: { $regex: pattern, $options: 'i' } }));
+    if (/^\d+$/.test(q)) {
+      const n = Number(q);
+      if (Number.isSafeInteger(n) && String(n) === q) or.push({ articleNo: n });
+    }
+    return { $or: or };
   }
 
   return { FIELDS, textField, fold, escapeRegex, productMatches, mongoProductFilter };

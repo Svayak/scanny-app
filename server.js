@@ -197,6 +197,18 @@ function serverError(res, err) {
   return res.status(500).json({ error: 'Internt serverfel' });
 }
 
+// Express 4 fångar inte avvisade promises i async-routes. Logga dem så
+// processen inte dör på ett ohanterat fel (t.ex. Cosmos som kastar i en query).
+process.on('unhandledRejection', (reason) => {
+  console.error('[FEL] Ohanterat promise-fel:', mail.safeErrorMessage(reason, [
+    process.env.MONGODB_URI,
+    process.env.ACS_EMAIL_CONNECTION_STRING,
+    process.env.SMTP_PASSWORD,
+    process.env.JWT_SECRET,
+    process.env.ADMIN_SECRET
+  ]));
+});
+
 // Escapar värden för säker inbäddning i HTML (används i serverrenderad export)
 function escHtml(v) {
   return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -347,8 +359,10 @@ app.post('/api/admin/create-tenant', async (req, res) => {
 // ══════════════════════════════════════════
 
 app.get('/api/products', authMiddleware, async (req, res) => {
-  const filter = Object.assign({ tenantId: req.tenantId }, mongoProductFilter(req.query.q));
-  res.json(await Product.find(filter).sort({ name: 1 }).limit(10000));
+  try {
+    const filter = Object.assign({ tenantId: req.tenantId }, mongoProductFilter(req.query.q));
+    res.json(await Product.find(filter).sort({ name: 1 }).limit(10000));
+  } catch (err) { serverError(res, err); }
 });
 
 app.post('/api/products', authMiddleware, async (req, res) => {
@@ -510,7 +524,9 @@ app.post('/api/add', authMiddleware, checkTenantActive, requirePermission('add',
 // ══════════════════════════════════════════
 
 app.get('/api/orders', authMiddleware, async (req, res) => {
-  res.json(await Order.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(10000));
+  try {
+    res.json(await Order.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(10000));
+  } catch (err) { serverError(res, err); }
 });
 
 app.post('/api/orders/send', authMiddleware, async (req, res) => {
@@ -581,8 +597,10 @@ app.post('/api/inventory-report', authMiddleware, checkTenantActive, requirePerm
 // ══════════════════════════════════════════
 
 app.get('/api/users', authMiddleware, async (req, res) => {
-  const users = await User.find({ tenantId: req.tenantId }).select('-password').sort({ name: 1 });
-  res.json(users.map(redact.sanitizeUser));
+  try {
+    const users = await User.find({ tenantId: req.tenantId }).select('-password').sort({ name: 1 });
+    res.json(users.map(redact.sanitizeUser));
+  } catch (err) { serverError(res, err); }
 });
 
 app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
@@ -655,7 +673,9 @@ app.delete('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
 // ══════════════════════════════════════════
 
 app.get('/api/vehicles', authMiddleware, async (req, res) => {
-  res.json(await Vehicle.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(10000));
+  try {
+    res.json(await Vehicle.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(10000));
+  } catch (err) { serverError(res, err); }
 });
 
 app.post('/api/vehicles', authMiddleware, async (req, res) => {
@@ -721,9 +741,11 @@ app.patch('/api/vehicles/:id/unarchive', authMiddleware, async (req, res) => {
 // ══════════════════════════════════════════
 
 app.get('/api/settings', authMiddleware, async (req, res) => {
-  const tenant = await Tenant.findById(req.tenantId);
-  if (!tenant) return res.status(404).json({ error: 'Tenant hittades inte' });
-  res.json(mail.publicSettings(tenant.settings.toObject()));
+  try {
+    const tenant = await Tenant.findById(req.tenantId);
+    if (!tenant) return res.status(404).json({ error: 'Tenant hittades inte' });
+    res.json(mail.publicSettings(tenant.settings.toObject()));
+  } catch (err) { serverError(res, err); }
 });
 
 app.put('/api/settings', authMiddleware, adminOnly, async (req, res) => {
@@ -782,12 +804,16 @@ app.post('/api/settings/test-alert', authMiddleware, adminOnly, async (req, res)
 // ══════════════════════════════════════════
 
 app.get('/api/logs', authMiddleware, async (req, res) => {
-  const logs = await Log.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(100);
-  res.json(logs.map(redact.publicLog));
+  try {
+    const logs = await Log.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(100);
+    res.json(logs.map(redact.publicLog));
+  } catch (err) { serverError(res, err); }
 });
 
 app.get('/api/inventory-reports', authMiddleware, async (req, res) => {
-  res.json(await InventoryReport.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(50));
+  try {
+    res.json(await InventoryReport.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(50));
+  } catch (err) { serverError(res, err); }
 });
 
 app.get('/api/vehicles/:id/export', authMiddleware, async (req, res) => {
@@ -843,13 +869,15 @@ app.get('/api/vehicles/:id/export', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/export/products.csv', authMiddleware, async (req, res) => {
-  const products = await Product.find({ tenantId: req.tenantId }).sort({ name: 1 }).limit(10000);
-  const header = 'Namn,Streckkod,Antal,Artikelnummer,Leverantör,A-pris\n';
-  const csvSafe = v => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g,'""') + '"'; };
-  const rows = products.map(p => [p.name, p.code, p.qty, p.articleNo||'', p.supplier||'', (p.price||0)].map(csvSafe).join(',')).join('\n');
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="lager.csv"');
-  res.send('\uFEFF' + header + rows);
+  try {
+    const products = await Product.find({ tenantId: req.tenantId }).sort({ name: 1 }).limit(10000);
+    const header = 'Namn,Streckkod,Antal,Artikelnummer,Leverantör,A-pris\n';
+    const csvSafe = v => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g,'""') + '"'; };
+    const rows = products.map(p => [p.name, p.code, p.qty, p.articleNo||'', p.supplier||'', (p.price||0)].map(csvSafe).join(',')).join('\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="lager.csv"');
+    res.send('\uFEFF' + header + rows);
+  } catch (err) { serverError(res, err); }
 });
 
 // Importera produkter fr\u00E5n CSV (skickas som text/plain, egen parser med st\u00F6rre gr\u00E4ns)
