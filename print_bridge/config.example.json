@@ -1,0 +1,7 @@
+{
+  "base_url": "https://scanny.se",
+  "bridge_key": "",
+  "backend": "windows",
+  "printer_name": "",
+  "poll_seconds": 3
+}

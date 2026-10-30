@@ -10,7 +10,7 @@ const SENSITIVE_KEYS = new Set([
 function isSensitiveKey(key) {
   const normalized = String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
   if (SENSITIVE_KEYS.has(normalized)) return true;
-  return /(password|smtppass|apikey|privatekey|connectionstring|accesstoken|refreshtoken|clientsecret|accountkey)$/.test(normalized);
+  return /(password|smtppass|apikey|privatekey|connectionstring|accesstoken|refreshtoken|clientsecret|accountkey|keyhash|bridgekey)$/.test(normalized);
 }
 
 function redactText(value, secrets = []) {

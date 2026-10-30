@@ -1,0 +1,4 @@
+requests>=2.31
+Pillow>=10.0
+python-barcode>=0.15
+pywin32>=306; sys_platform == "win32"

@@ -4,7 +4,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "test:bridge": "python3 -m unittest discover -s print_bridge/tests -v"
   },
   "engines": {
     "node": ">=18.0.0"
