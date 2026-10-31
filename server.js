@@ -9,6 +9,7 @@ const cors       = require('cors');
 const { assetVersion, injectAssetVersion } = require('./app-version');
 const { textField, mongoProductFilter } = require('./public/js/product-search');
 const userLink = require('./public/js/user-link');
+const { persistActor, withdrawalEntry } = require('./user-id-store');
 const APP_VERSION = assetVersion(__dirname);
 
 const helmet = require('helmet');
@@ -180,7 +181,7 @@ function addLog(tenantId, msg, type = 'normal', actor = null) {
     time: now.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }),
     date: now.toLocaleDateString('sv-SE'),
     msg, type,
-    ...userLink.actorFields(actor)
+    ...persistActor(actor)
   }).catch(() => {});
 }
 
@@ -569,7 +570,7 @@ app.post('/api/inventory-report', authMiddleware, checkTenantActive, requirePerm
       total:     entries.length,
       diffCount: diffs.length,
       actorName: req.actor?.name || '',
-      ...userLink.actorFields(req.actor),
+      ...persistActor(req.actor),
       entries
     }).catch(() => {});
     const tenant = await Tenant.findById(req.tenantId);
@@ -724,15 +725,14 @@ app.post('/api/vehicles/:id/log', authMiddleware, async (req, res) => {
     if (!v) return res.status(404).json({ error: 'Fordon hittades inte' });
     if (v.archived) return res.status(400).json({ error: 'Fordonet är arkiverat' });
     const actor = req.actor || await getActor(req);
-    v.history.unshift({
+    v.history.unshift(withdrawalEntry(actor, {
       time: new Date().toLocaleString('sv-SE'),
       productName,
       qty: qty || 1,
-      userName: actor?.name || userName || '—',
-      articleNo: articleNo || '—',
-      supplier: supplier || '—',
-      ...userLink.actorFields(actor)
-    });
+      userName,
+      articleNo,
+      supplier
+    }));
     if (v.history.length > 500) v.history = v.history.slice(0, 500);
     await v.save();
     res.json({ ok: true });
