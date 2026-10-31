@@ -2,6 +2,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const mongoose = require('mongoose');
 const users = require('../public/js/user-link');
 
 const root = path.join(__dirname, '..');
@@ -78,10 +79,12 @@ describe('redigera användare', () => {
   });
 
   it('skriver aktivitetsloggen med vem som ändrade och den personens id', () => {
-    const actor = { _id: 'admin-1', name: 'Kalle' };
+    const actorId = new mongoose.Types.ObjectId();
+    const actor = { _id: actorId, name: 'Kalle' };
     const msg = users.changeMessage('Anna', 'Beatrice', { canScan: true, canAdd: true, canInventory: false }, actor);
     assert.equal(msg, 'Användare ändrad: Anna → Beatrice, behörigheter: Uttag, Addera — av Kalle');
-    assert.deepEqual(users.actorFields(actor), { userId: 'admin-1', actorName: 'Kalle' });
+    assert.deepEqual(users.actorFields(actor), { userId: actorId.toHexString(), actorName: 'Kalle' });
+    assert.notEqual(users.actorFields(actor).userId, String(actorId.id));
     assert.deepEqual(users.actorFields(null), {});
   });
 
@@ -93,17 +96,20 @@ describe('redigera användare', () => {
   });
 
   it('hittar inte en användare som tillhör en annan verkstad', () => {
+    const shared = new mongoose.Types.ObjectId();
+    const tenantA = new mongoose.Types.ObjectId();
+    const tenantB = new mongoose.Types.ObjectId();
     const list = [
-      { _id: 'u1', tenantId: 'verkstad-a', name: 'Anna' },
-      { _id: 'u1', tenantId: 'verkstad-b', name: 'Anna' }
+      { _id: shared, tenantId: tenantA, name: 'Anna' },
+      { _id: shared, tenantId: tenantB, name: 'Anna' }
     ];
-    assert.equal(users.findTenantUser(list, 'u1', 'verkstad-b').name, 'Anna');
-    assert.equal(users.findTenantUser(list, 'u1', 'verkstad-b').tenantId, 'verkstad-b');
-    assert.equal(users.findTenantUser(list, 'saknas', 'verkstad-a'), null);
+    assert.equal(users.findTenantUser(list, shared, tenantB).name, 'Anna');
+    assert.equal(String(users.findTenantUser(list, shared, tenantB).tenantId), String(tenantB));
+    assert.equal(users.findTenantUser(list, new mongoose.Types.ObjectId(), tenantA), null);
     const onlyA = users.findTenantUser(
-      [{ _id: 'u2', tenantId: 'verkstad-a', name: 'Bea' }],
-      'u2',
-      'verkstad-b'
+      [{ _id: new mongoose.Types.ObjectId(), tenantId: tenantA, name: 'Bea' }],
+      shared,
+      tenantB
     );
     assert.equal(onlyA, null);
   });
@@ -149,7 +155,9 @@ describe('redigera användare i servern och admin', () => {
     assert.equal(profile.includes('user.pin'), false);
     assert.match(patch, /user\.pin = await bcrypt\.hash/);
     assert.match(server, /createPermissionGate\(getActor\)/);
-    assert.match(server, /actorFields\(actor\)/);
+    assert.match(server, /persistActor\(actor\)/);
+    assert.match(read('user-id-store.js'), /userLink\.actorFields\(actor\)/);
+    assert.match(read('user-id-store.js'), /new mongoose\.Types\.ObjectId/);
     assert.equal(server.includes('backfill-user-ids'), false);
   });
 

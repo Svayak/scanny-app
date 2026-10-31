@@ -8,15 +8,22 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const NAME_RULES = { maxLength: null, uniqueWithinTenant: false };
   const PLACEHOLDER_NAMES = new Set(['', '—', '-', '–']);
+  const HEX_ID = /^[a-f0-9]{24}$/;
 
+  // ObjectId.id är 12 råa byte, inte det 24-teckens hex-id:t. toHexString() först.
   function idOf(value) {
-    if (value == null || value === '') return '';
+    if (value == null || value === '') return null;
     if (typeof value === 'object') {
+      if (typeof value.toHexString === 'function') {
+        const hex = String(value.toHexString()).toLowerCase();
+        return HEX_ID.test(hex) ? hex : null;
+      }
       if (value._id != null && value._id !== value) return idOf(value._id);
-      if (value.id != null && value.id !== value) return idOf(value.id);
-      if (typeof value.toHexString === 'function') return value.toHexString();
+      if (typeof value.id === 'string') return idOf(value.id);
+      return null;
     }
-    return String(value);
+    const text = String(value).trim().toLowerCase();
+    return HEX_ID.test(text) ? text : null;
   }
 
   function trimName(name) {
@@ -126,7 +133,8 @@
   }
 
   function actorFields(actor) {
-    const userId = actor && (actor._id || actor.id);
+    if (!actor) return {};
+    const userId = idOf(actor);
     if (!userId) return {};
     return { userId, actorName: actor.name || '' };
   }
@@ -134,7 +142,7 @@
   function indexUsers(users) {
     const map = new Map();
     for (const user of users || []) {
-      const id = idOf(user && (user.id || user._id));
+      const id = idOf(user);
       if (id) map.set(id, user);
     }
     return map;
@@ -144,7 +152,7 @@
     const id = idOf(userId);
     if (!id) return null;
     if (users instanceof Map) return users.get(id) || null;
-    return (users || []).find(user => idOf(user && (user.id || user._id)) === id) || null;
+    return (users || []).find(user => idOf(user) === id) || null;
   }
 
   function displayUserName(userId, snapshot, users) {
@@ -284,7 +292,9 @@
     if (!parsed || PLACEHOLDER_NAMES.has(parsed)) return { kind: 'noActor' };
     const match = matchName(parsed, candidateUsers(users, tenantId));
     if (match.status === 'matched') {
-      return { kind: 'matched', set: { userId: idOf(match.user._id || match.user.id) } };
+      const userId = idOf(match.user);
+      if (!userId) return { kind: 'unmatched' };
+      return { kind: 'matched', set: { userId } };
     }
     return { kind: match.status, set: { userId: null, legacyActorName: parsed } };
   }
@@ -359,6 +369,14 @@
     };
   }
 
+  function sameRecordId(a, b) {
+    const left = idOf(a);
+    const right = idOf(b);
+    if (left && right) return left === right;
+    if (a == null || b == null) return false;
+    return String(a) === String(b);
+  }
+
   function applyBackfill(input, plan) {
     const source = input || {};
     const next = {
@@ -373,7 +391,7 @@
     };
     const decided = plan || planBackfill(source);
     for (const update of decided.logs.updates) {
-      const log = next.logs.find(entry => idOf(entry._id || entry.id) === idOf(update.id));
+      const log = next.logs.find(entry => sameRecordId(entry._id || entry.id, update.id));
       if (!log) continue;
       const msg = log.msg;
       for (const [key, value] of Object.entries(update.set || {})) {
@@ -384,7 +402,7 @@
       log.msg = msg;
     }
     for (const update of decided.vehicles.updates) {
-      const vehicle = next.vehicles.find(entry => idOf(entry._id || entry.id) === idOf(update.id));
+      const vehicle = next.vehicles.find(entry => sameRecordId(entry._id || entry.id, update.id));
       if (!vehicle) continue;
       const previous = vehicle.history || [];
       vehicle.history = (update.history || []).map((row, index) => {
@@ -395,7 +413,7 @@
       });
     }
     for (const update of decided.inventoryReports.updates) {
-      const report = next.inventoryReports.find(entry => idOf(entry._id || entry.id) === idOf(update.id));
+      const report = next.inventoryReports.find(entry => sameRecordId(entry._id || entry.id, update.id));
       if (!report) continue;
       const actorName = report.actorName;
       for (const [key, value] of Object.entries(update.set || {})) {
@@ -410,7 +428,7 @@
   function findTenantUser(users, id, tenantId) {
     const want = idOf(id);
     const tenant = idOf(tenantId);
-    return (users || []).find(user => idOf(user._id || user.id) === want && idOf(user.tenantId) === tenant) || null;
+    return (users || []).find(user => idOf(user) === want && idOf(user.tenantId) === tenant) || null;
   }
 
   return {

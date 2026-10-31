@@ -13,20 +13,53 @@ const userLink = require('../public/js/user-link');
 const APPLY = process.argv.includes('--apply');
 
 function asObjectId(id) {
-  const text = String(id || '');
-  if (!/^[a-fA-F0-9]{24}$/.test(text)) return null;
-  return new mongoose.Types.ObjectId(text);
+  const hex = userLink.idOf(id);
+  if (!hex) return null;
+  return new mongoose.Types.ObjectId(hex);
 }
 
+function formatId(value) {
+  return userLink.idOf(value) || (value == null || value === '' ? 'utan id' : 'ogiltigt-id');
+}
+
+// null betyder att userId inte är ett giltigt ObjectId och raden inte får skrivas.
 function linkSet(set) {
   const out = {};
   if (!set) return out;
   if (Object.prototype.hasOwnProperty.call(set, 'userId')) {
-    out.userId = set.userId == null ? null : asObjectId(set.userId);
+    if (set.userId == null || set.userId === '') out.userId = null;
+    else {
+      const id = asObjectId(set.userId);
+      if (!id) return null;
+      out.userId = id;
+    }
   }
   if (set.legacyActorName) out.legacyActorName = set.legacyActorName;
   if (set.actorName) out.actorName = set.actorName;
   return out;
+}
+
+function sanitizeHistory(rows) {
+  const next = [];
+  for (const row of rows || []) {
+    const copy = { ...row };
+    if (copy.userId != null && copy.userId !== '') {
+      const id = asObjectId(copy.userId);
+      if (!id) return null;
+      copy.userId = id;
+    }
+    next.push(copy);
+  }
+  return next;
+}
+
+function addBucket(target, bucket) {
+  for (const field of ['examined', 'matched', 'ambiguous', 'unmatched', 'already', 'noActor']) {
+    target[field] += bucket[field] || 0;
+  }
+  target.updates.push(...(bucket.updates || []));
+  target.samples.push(...(bucket.samples || []));
+  if (bucket.documents) target.documents = (target.documents || 0) + bucket.documents;
 }
 
 function openFilter(id, tenantId) {
@@ -53,7 +86,11 @@ async function applyPlan(plan) {
   const written = { logs: 0, vehicles: 0, inventoryReports: 0, skippedUnsafe: 0 };
   for (const update of plan.logs.updates) {
     const set = linkSet(update.set);
-    if (set.userId === null && update.set.userId) {
+    if (!set) {
+      written.skippedUnsafe += 1;
+      continue;
+    }
+    if (set.userId === null && update.set && update.set.userId) {
       written.skippedUnsafe += 1;
       continue;
     }
@@ -76,16 +113,8 @@ async function applyPlan(plan) {
       written.skippedUnsafe += 1;
       continue;
     }
-    const history = update.history.map(row => {
-      const copy = { ...row };
-      if (copy.userId) {
-        const id = asObjectId(copy.userId);
-        if (!id) return row;
-        copy.userId = id;
-      }
-      return copy;
-    });
-    if (!namesIntact(before, history)) {
+    const history = sanitizeHistory(update.history);
+    if (!history || !namesIntact(before, history)) {
       written.skippedUnsafe += 1;
       continue;
     }
@@ -94,8 +123,12 @@ async function applyPlan(plan) {
   }
   for (const update of plan.inventoryReports.updates) {
     const set = linkSet(update.set);
+    if (!set) {
+      written.skippedUnsafe += 1;
+      continue;
+    }
     delete set.actorName;
-    if (set.userId === null && update.set.userId) {
+    if (set.userId === null && update.set && update.set.userId) {
       written.skippedUnsafe += 1;
       continue;
     }
@@ -115,7 +148,7 @@ function printBucket(name, bucket) {
   console.log(`  utan träff: ${bucket.unmatched}`);
   console.log(`  skrivningar: ${bucket.updates.length}`);
   for (const sample of (bucket.samples || []).slice(0, 30)) {
-    console.log(`  - ${sample.reason}: ${sample.name} (${sample.id || 'utan id'}, verkstad ${sample.tenantId || '—'})`);
+    console.log(`  - ${sample.reason}: ${sample.name} (${formatId(sample.id)}, verkstad ${formatId(sample.tenantId)})`);
   }
 }
 
@@ -131,14 +164,7 @@ async function main() {
     inventoryReports: { examined: 0, matched: 0, ambiguous: 0, unmatched: 0, already: 0, noActor: 0, updates: [], samples: [] },
     orders: { documents: 0, updated: 0 }
   };
-  const add = (target, bucket, key) => {
-    for (const field of ['examined', 'matched', 'ambiguous', 'unmatched', 'already', 'noActor']) {
-      target[field] += bucket[field] || 0;
-    }
-    if (key === 'updates') target.updates.push(...bucket.updates);
-    target.samples.push(...(bucket.samples || []));
-    if (bucket.documents) target.documents = (target.documents || 0) + bucket.documents;
-  };
+  const add = addBucket;
 
   const users = await User.find().select('name tenantId').lean();
   const logs = await Log.find().select('tenantId msg actorName userId legacyActorName').lean();
@@ -151,7 +177,7 @@ async function main() {
   ]);
 
   const byTenant = new Map();
-  const tenantOf = (row) => String(row.tenantId || '');
+  const tenantOf = (row) => userLink.idOf(row.tenantId) || '';
   for (const row of users) {
     const key = tenantOf(row);
     if (!byTenant.has(key)) byTenant.set(key, { users: [], logs: [], vehicles: [], inventoryReports: [] });
@@ -181,7 +207,7 @@ async function main() {
   printBucket('Inventeringsrapporter', totals.inventoryReports);
   console.log('\nOrdrar');
   console.log(`  dokument: ${orders}`);
-  console.log('  skrivningar: 0');
+  console.log('  userId-fält: inga');
   console.log('  Order.name är produktnamn. Ordrar har ingen användarreferens och lämnas orörda.');
   console.log('\nÖvrigt utan användarreferens');
   console.log(`  produkter: ${products}, utskriftsjobb: ${printJobs} — orörda`);
@@ -206,6 +232,7 @@ async function main() {
   console.log(`  inventeringar uppdaterade: ${written.inventoryReports}`);
   console.log(`  överhoppade osäkra: ${written.skippedUnsafe}`);
   await mongoose.disconnect();
+  if (written.skippedUnsafe) process.exitCode = 1;
 }
 
 if (require.main === module) {
@@ -216,4 +243,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { applyPlan, linkSet, namesIntact, openFilter };
+module.exports = { applyPlan, linkSet, namesIntact, openFilter, asObjectId, formatId, sanitizeHistory, addBucket };
