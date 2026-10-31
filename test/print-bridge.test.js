@@ -520,7 +520,7 @@ describe('manual printing stays unchanged', () => {
     const preview = `app.get('/api/products/:id/label.png', authMiddleware, async (req, res) => {
   try {
     if (!generateLabelPng) return res.status(503).json({ error: 'Etikettfunktionen är inte tillgänglig på denna server.' });
-    const product = await Product.findOne({ _id: req.params.id, tenantId: req.tenantId });
+    const product = await Product.findOne(productTrash.activeFilter(req.tenantId, { _id: req.params.id }));
     if (!product) return res.status(404).json({ error: 'Produkt hittades inte' });
     const tenant = await Tenant.findById(req.tenantId);
     const png = await generateLabelPng(product, tenant?.settings?.labelSize || '62');
@@ -532,7 +532,7 @@ describe('manual printing stays unchanged', () => {
     const browserPrint = `app.post('/api/products/:id/print-label', authMiddleware, async (req, res) => {
   try {
     if (!printLabel) return res.status(503).json({ error: 'Etikettutskrift är inte tillgänglig på denna server.' });
-    const product = await Product.findOne({ _id: req.params.id, tenantId: req.tenantId });
+    const product = await Product.findOne(productTrash.activeFilter(req.tenantId, { _id: req.params.id }));
     if (!product) return res.status(404).json({ error: 'Produkt hittades inte' });
     const tenant = await Tenant.findById(req.tenantId);
     await printLabel(product, tenant?.settings || {});

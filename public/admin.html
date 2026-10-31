@@ -27,6 +27,7 @@
 <style>
 .admin-hub{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px;margin-top:.5rem}
 .admin-tile{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 20px 24px;display:flex;flex-direction:column;align-items:center;gap:12px;cursor:pointer;transition:box-shadow .15s,transform .12s,border-color .15s;text-decoration:none;color:var(--text);user-select:none}
+.admin-tile[hidden]{display:none !important}
 .admin-tile:hover{box-shadow:0 4px 20px rgba(0,0,0,.09);transform:translateY(-2px);border-color:var(--accent)}
 .admin-tile:active{transform:scale(.97)}
 .admin-tile-icon{width:60px;height:60px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:28px;flex-shrink:0}
@@ -199,6 +200,11 @@
           <div class="admin-tile-icon">📈</div>
           <div class="admin-tile-label">Logg</div>
           <div class="admin-tile-desc">Händelser &amp; aktivitet</div>
+        </div>
+        <div class="admin-tile" id="trash-tile" hidden onclick="showAdminSub('trash')">
+          <div class="admin-tile-icon" style="background:#fee2e2">🗑</div>
+          <div class="admin-tile-label">Papperskorg</div>
+          <div class="admin-tile-desc">Borttagna produkter, 30 dagar</div>
         </div>
         <div class="admin-tile" style="--tile-bg:#e0f2fe" onclick="showAdminSub('users')">
           <div class="admin-tile-icon" style="background:#e0f2fe">👤</div>
@@ -436,6 +442,36 @@
           <div class="form-group"><label>Kontaktuppgifter</label><input id="v-contact" placeholder="070-123 45 67"></div>
         </div>
         <button class="btn btn-primary" style="margin-top:1rem" onclick="addVehicle()">Lägg till fordon</button>
+      </div>
+    </div>
+
+    <!-- ── ADMIN SUB: PAPPERSKORG ── -->
+    <div class="panel" id="tab-trash">
+      <button class="back-btn" onclick="showTab('admin')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+        Tillbaka till Admin
+      </button>
+      <div class="page-header">
+        <div>
+          <h1>Papperskorg</h1>
+          <p id="trash-intro" style="font-size:13px;color:var(--text2);margin-top:2px">Borttagna produkter ligger här i 30 dagar. Därefter raderas de permanent.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Produkt</th>
+              <th>Streckkod</th>
+              <th>Art.nr</th>
+              <th>Borttagen av</th>
+              <th>Borttagen</th>
+              <th>Raderas</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="trash-body"></tbody>
+        </table>
       </div>
     </div>
 

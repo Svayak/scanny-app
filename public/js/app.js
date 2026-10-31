@@ -149,12 +149,15 @@ async function api(method, path, body) {
         document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0c0f0a;font-family:sans-serif;text-align:center;padding:2rem"><div><div style="font-size:48px;margin-bottom:1rem">⏸</div><h1 style="color:#f0ede8;font-size:24px;margin-bottom:12px">Kontot är pausat</h1><p style="color:#9fa899;font-size:16px;margin-bottom:24px">Din prenumeration är pausad. Kontakta Scanny för att återaktivera.</p><a href="/api/export/products.csv" style="display:inline-block;padding:12px 24px;background:#4ade80;color:#0c0f0a;border-radius:8px;text-decoration:none;font-weight:700;margin-bottom:12px">Exportera lager som CSV</a><br><p style="color:#6b7265;font-size:13px;margin-top:16px">Kontakt: <a href="mailto:info@scanny.se" style="color:#4ade80">info@scanny.se</a></p></div></div>';
         return;
       }
+      const denied = new Error(d.error || 'Saknar behörighet');
+      denied.keepStatus = true;
+      throw denied;
     }
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Serverfel');
     return data;
   } catch (err) {
-    setStatus(false);
+    if (!err || !err.keepStatus) setStatus(false);
     throw err;
   }
 }
@@ -191,6 +194,7 @@ async function loadAll() {
     if (db.orders)   db.orders.forEach(o   => { if (!o.id) o.id = o._id; });
     if (db.users)    db.users.forEach(u    => { if (!u.id) u.id = u._id; });
     if (db.vehicles) db.vehicles.forEach(v => { if (!v.id) v.id = v._id; });
+    await loadTrashQuiet();
     setStatus(true);
     renderAll();
   } catch (_) {
@@ -734,7 +738,7 @@ function renderLager() {
 	'<button class="btn btn-sm" onclick="showEditModal(\''+p.id+'\')">Redigera</button>'+
 	'<button class="btn btn-sm" onclick="printLabel(\''+p.id+'\')" title="Skriv ut etikett">🏷 Etikett</button>'+
 	queueLabelButton(p.id) +
-	'<button class="btn btn-sm btn-danger" onclick="deleteProduct(\''+p.id+'\')">Ta bort</button>'+
+	productDeleteButton(p) +
     '</td></tr>'
   ).join('');
 }
@@ -1022,6 +1026,8 @@ function renderAll() {
   renderSettings();
   renderUsers();
   renderVehicles();
+  renderTrash();
+  renderAdminChrome();
   applyPlanUI();
 }
 
@@ -1383,11 +1389,91 @@ function adjustQty(id, delta) {
     .finally(() => { _inflight--; scheduleReconcile(); });
 }
 
+function productDeleteButton(p) {
+  if (currentRole() !== 'admin') return '';
+  return '<button class="btn btn-sm btn-danger" onclick="deleteProduct(\'' + escJs(p.id) + '\')">Ta bort</button>';
+}
+
+async function loadTrashQuiet() {
+  db.trash = [];
+  if (currentRole() !== 'admin') return;
+  try {
+    const token = getToken();
+    const res = await fetch('/api/products/trash', {
+      headers: token ? { Authorization: 'Bearer ' + token } : {}
+    });
+    if (!res.ok) return;
+    const rows = await res.json();
+    db.trash = Array.isArray(rows) ? rows : [];
+    db.trash.forEach(p => { if (!p.id && p._id) p.id = p._id; });
+  } catch (_) {
+    db.trash = [];
+  }
+}
+
+function renderAdminChrome() {
+  const tile = document.getElementById('trash-tile');
+  if (tile) tile.hidden = currentRole() !== 'admin';
+}
+
+function trashWhen(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString('sv-SE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function renderTrash() {
+  const body = document.getElementById('trash-body');
+  if (!body) return;
+  if (currentRole() !== 'admin') {
+    body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:2rem">Papperskorgen är bara tillgänglig för administratörer.</td></tr>';
+    return;
+  }
+  const rows = db.trash || [];
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:2rem">Papperskorgen är tom.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(p =>
+    '<tr>' +
+    '<td style="font-weight:500">' + esc(p.name) + '</td>' +
+    '<td style="font-family:monospace">' + esc(p.code || '—') + '</td>' +
+    '<td>' + esc(p.articleNo || '—') + '</td>' +
+    '<td>' + esc(p.deletedByName || '—') + '</td>' +
+    '<td>' + esc(trashWhen(p.deletedAt)) + '</td>' +
+    '<td>' + esc(trashWhen(p.purgeAt)) + '</td>' +
+    '<td><div class="trash-actions">' +
+      '<button class="btn btn-sm" onclick="restoreProduct(\'' + escJs(p.id) + '\')">Återställ</button>' +
+      '<button class="btn btn-sm btn-danger" onclick="permanentlyDeleteProduct(\'' + escJs(p.id) + '\')">Radera permanent</button>' +
+    '</div></td>' +
+    '</tr>'
+  ).join('');
+}
+
 async function deleteProduct(id) {
+  if (currentRole() !== 'admin') { toast('Kräver admin-behörighet', 'error'); return; }
   const p = db.products.find(x => x.id === id);
   if (!p) return;
-  if (!confirm('Ta bort "' + p.name + '"? Åtgärden kan inte ångras.')) return;
-  try { await api('DELETE', '/api/products/' + id); toast('Produkt borttagen'); await loadAll(); }
+  if (!confirm('Flytta "' + p.name + '" till papperskorgen? Produkten kan återställas i 30 dagar.')) return;
+  try { await api('DELETE', '/api/products/' + id); toast('Produkt flyttad till papperskorgen'); await loadAll(); }
+  catch (err) { toast(err.message, 'error'); }
+}
+
+async function restoreProduct(id) {
+  if (currentRole() !== 'admin') { toast('Kräver admin-behörighet', 'error'); return; }
+  const p = (db.trash || []).find(x => x.id === id);
+  if (!p) return;
+  if (!confirm('Återställ "' + p.name + '" till lagret?')) return;
+  try { await api('POST', '/api/products/' + id + '/restore'); toast('Produkt återställd'); await loadAll(); }
+  catch (err) { toast(err.message, 'error'); }
+}
+
+async function permanentlyDeleteProduct(id) {
+  if (currentRole() !== 'admin') { toast('Kräver admin-behörighet', 'error'); return; }
+  const p = (db.trash || []).find(x => x.id === id);
+  if (!p) return;
+  if (!confirm('Radera "' + p.name + '" permanent? Detta går inte att ångra.')) return;
+  try { await api('DELETE', '/api/products/' + id + '/permanent'); toast('Produkten raderades permanent'); await loadAll(); }
   catch (err) { toast(err.message, 'error'); }
 }
 

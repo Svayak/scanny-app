@@ -73,9 +73,22 @@ const productSchema = new mongoose.Schema({
   },
   supplier:  { type: String, default: '' },
   price:     { type: Number, default: 0 },   // A-pris (utpris till kund), SEK
+  // Papperskorg. Saknat eller null deletedAt = aktiv produkt.
+  // archivedCode håller streckkoden medan code är en gravsten, så det
+  // unika indexet inte spärrar om samma kod skapas på nytt.
+  // Cosmos DB kan inte antas stödja partiellt unikt index eller TTL på
+  // deletedAt (det kräver kontokapaciteter, och TTL på _ts raderar allt).
+  archivedCode: { type: String, default: '' },
+  deletedAt:    { type: Date, default: null },
+  deletedBy: {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    name:   { type: String, default: '' }
+  },
   createdAt: { type: Date, default: Date.now }
 });
 productSchema.index({ tenantId: 1, code: 1 }, { unique: true });
+productSchema.index({ tenantId: 1, deletedAt: 1 });
+productSchema.index({ deletedAt: 1 });
 
 // ── Order ──
 const orderSchema = new mongoose.Schema({
@@ -87,6 +100,8 @@ const orderSchema = new mongoose.Schema({
   supplier:   String,
   articleNo:  String,
   sent:       { type: Boolean, default: false },
+  // Sätts när produkten ligger i papperskorgen så ordern inte syns i kön.
+  productDeleted: { type: Boolean, default: false },
   createdAt:  { type: Date, default: Date.now }
 });
 
@@ -115,7 +130,13 @@ const logSchema = new mongoose.Schema({
   time:     String,
   date:     String,
   msg:      String,
+  // type är allvarlighetsgrad (normal/warn/order). activityType är händelsen.
   type:     { type: String, default: 'normal' },
+  activityType: { type: String, default: '' },
+  productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+  articleNo: { type: String, default: '' },
+  productName: { type: String, default: '' },
+  code:     { type: String, default: '' },
   userId:   { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   actorName: { type: String, default: '' },
   legacyActorName: { type: String, default: '' },
