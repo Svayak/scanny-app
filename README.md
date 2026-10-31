@@ -6,17 +6,16 @@ Lager, beställningar och lagerlarm för verkstäder.
 
 Kioskens användare har ett fast id. Nya uttag, påfyllningar, inventeringar och händelseloggar sparar `userId` tillsammans med namnet som ögonblicksbild. Äldre rader har bara namnet. Migreringen fyller i `userId` genom att matcha namnet mot användare i samma verkstad. Den ändrar inte meddelandetext, `userName` eller `actorName`, och den körs inte vid deploy.
 
-Kör först en torrkörning. Den skriver inget, utan visar antal per samling:
+Deploya först den rättade koden, så nya rader inte får ett trasigt id. Ta sedan bort redan felaktiga `userId` och fyll i dem på nytt. Varje steg som skriver har en torrkörning före.
 
 ```
+node scripts/repair-invalid-user-ids.js
+node scripts/repair-invalid-user-ids.js --apply
 node scripts/backfill-user-ids.js
-```
-
-När siffrorna ser rätt ut, samma kommando med `--apply`:
-
-```
 node scripts/backfill-user-ids.js --apply
 ```
+
+Reparationen tar bara bort `userId` som inte är ett giltigt ObjectId, eller som inte pekar på en användare i samma verkstad. Namn och texter ligger kvar. Torrkörningen av backfill visar antal per samling, inklusive hur många rader som skulle skrivas.
 
 `MONGODB_URI` måste vara satt (samma variabel som servern). Skriptet kan köras igen. Rader som redan har `userId`, eller som redan markerats som oklara, rörs inte. Träffar bara ett namn på en användare i verkstaden kopplas raden. Borttagna användare och dubblettnamn får `userId: null` och `legacyActorName` satt till namnet som stod där. De syns sedan med det sparade namnet.
 

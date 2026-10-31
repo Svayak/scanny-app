@@ -9,6 +9,7 @@ const cors       = require('cors');
 const { assetVersion, injectAssetVersion } = require('./app-version');
 const { textField, mongoProductFilter } = require('./public/js/product-search');
 const userLink = require('./public/js/user-link');
+const { persistActor, withdrawalEntry } = require('./user-id-store');
 const logQuery = require('./public/js/log-query');
 const APP_VERSION = assetVersion(__dirname);
 
@@ -181,7 +182,7 @@ function addLog(tenantId, msg, type = 'normal', actor = null, fields = null) {
     time: now.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }),
     date: now.toLocaleDateString('sv-SE'),
     msg, type,
-    ...userLink.actorFields(actor),
+    ...persistActor(actor),
     ...logQuery.logFields(fields)
   }).catch(() => {});
 }
@@ -200,6 +201,18 @@ function serverError(res, err) {
   ]));
   return res.status(500).json({ error: 'Internt serverfel' });
 }
+
+// Express 4 fångar inte avvisade promises i async-routes. Logga dem så
+// processen inte dör på ett ohanterat fel (t.ex. Cosmos som kastar i en query).
+process.on('unhandledRejection', (reason) => {
+  console.error('[FEL] Ohanterat promise-fel:', mail.safeErrorMessage(reason, [
+    process.env.MONGODB_URI,
+    process.env.ACS_EMAIL_CONNECTION_STRING,
+    process.env.SMTP_PASSWORD,
+    process.env.JWT_SECRET,
+    process.env.ADMIN_SECRET
+  ]));
+});
 
 // Escapar värden för säker inbäddning i HTML (används i serverrenderad export)
 function escHtml(v) {
@@ -339,8 +352,10 @@ app.post('/api/admin/create-tenant', async (req, res) => {
 // ══════════════════════════════════════════
 
 app.get('/api/products', authMiddleware, async (req, res) => {
-  const filter = Object.assign({ tenantId: req.tenantId }, mongoProductFilter(req.query.q));
-  res.json(await Product.find(filter).sort({ name: 1 }).limit(10000));
+  try {
+    const filter = Object.assign({ tenantId: req.tenantId }, mongoProductFilter(req.query.q));
+    res.json(await Product.find(filter).sort({ name: 1 }).limit(10000));
+  } catch (err) { serverError(res, err); }
 });
 
 app.post('/api/products', authMiddleware, async (req, res) => {
@@ -502,7 +517,9 @@ app.post('/api/add', authMiddleware, checkTenantActive, requirePermission('add',
 // ══════════════════════════════════════════
 
 app.get('/api/orders', authMiddleware, async (req, res) => {
-  res.json(await Order.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(10000));
+  try {
+    res.json(await Order.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).limit(10000));
+  } catch (err) { serverError(res, err); }
 });
 
 app.post('/api/orders/send', authMiddleware, async (req, res) => {
@@ -555,7 +572,7 @@ app.post('/api/inventory-report', authMiddleware, checkTenantActive, requirePerm
       total:     entries.length,
       diffCount: diffs.length,
       actorName: req.actor?.name || '',
-      ...userLink.actorFields(req.actor),
+      ...persistActor(req.actor),
       entries
     }).catch(() => {});
     const tenant = await Tenant.findById(req.tenantId);
@@ -710,15 +727,14 @@ app.post('/api/vehicles/:id/log', authMiddleware, async (req, res) => {
     if (!v) return res.status(404).json({ error: 'Fordon hittades inte' });
     if (v.archived) return res.status(400).json({ error: 'Fordonet är arkiverat' });
     const actor = req.actor || await getActor(req);
-    v.history.unshift({
+    v.history.unshift(withdrawalEntry(actor, {
       time: new Date().toLocaleString('sv-SE'),
       productName,
       qty: qty || 1,
-      userName: actor?.name || userName || '—',
-      articleNo: articleNo || '—',
-      supplier: supplier || '—',
-      ...userLink.actorFields(actor)
-    });
+      userName,
+      articleNo,
+      supplier
+    }));
     if (v.history.length > 500) v.history = v.history.slice(0, 500);
     await v.save();
     res.json({ ok: true });
@@ -748,9 +764,11 @@ app.patch('/api/vehicles/:id/unarchive', authMiddleware, async (req, res) => {
 // ══════════════════════════════════════════
 
 app.get('/api/settings', authMiddleware, async (req, res) => {
-  const tenant = await Tenant.findById(req.tenantId);
-  if (!tenant) return res.status(404).json({ error: 'Tenant hittades inte' });
-  res.json(mail.publicSettings(tenant.settings.toObject()));
+  try {
+    const tenant = await Tenant.findById(req.tenantId);
+    if (!tenant) return res.status(404).json({ error: 'Tenant hittades inte' });
+    res.json(mail.publicSettings(tenant.settings.toObject()));
+  } catch (err) { serverError(res, err); }
 });
 
 app.put('/api/settings', authMiddleware, adminOnly, async (req, res) => {
@@ -945,13 +963,15 @@ app.get('/api/vehicles/:id/export', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/export/products.csv', authMiddleware, async (req, res) => {
-  const products = await Product.find({ tenantId: req.tenantId }).sort({ name: 1 }).limit(10000);
-  const header = 'Namn,Streckkod,Antal,Artikelnummer,Leverantör,A-pris\n';
-  const csvSafe = v => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g,'""') + '"'; };
-  const rows = products.map(p => [p.name, p.code, p.qty, p.articleNo||'', p.supplier||'', (p.price||0)].map(csvSafe).join(',')).join('\n');
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="lager.csv"');
-  res.send('\uFEFF' + header + rows);
+  try {
+    const products = await Product.find({ tenantId: req.tenantId }).sort({ name: 1 }).limit(10000);
+    const header = 'Namn,Streckkod,Antal,Artikelnummer,Leverantör,A-pris\n';
+    const csvSafe = v => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g,'""') + '"'; };
+    const rows = products.map(p => [p.name, p.code, p.qty, p.articleNo||'', p.supplier||'', (p.price||0)].map(csvSafe).join(',')).join('\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="lager.csv"');
+    res.send('\uFEFF' + header + rows);
+  } catch (err) { serverError(res, err); }
 });
 
 // Importera produkter fr\u00E5n CSV (skickas som text/plain, egen parser med st\u00F6rre gr\u00E4ns)
