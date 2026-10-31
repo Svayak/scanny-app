@@ -10,6 +10,7 @@ const FILES = [
   'public/js/kiosk-update.js',
   'public/js/product-search.js',
   'public/js/user-link.js',
+  'public/js/log-query.js',
   'public/js/mode-timer.js',
   'public/css/style.css',
   'public/sw.js'

@@ -115,13 +115,28 @@ const logSchema = new mongoose.Schema({
   time:     String,
   date:     String,
   msg:      String,
+  // type är allvarlighetsgrad (normal/warn/order). activityType är händelsen.
   type:     { type: String, default: 'normal' },
+  activityType: { type: String, default: '' },
+  productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+  articleNo: { type: String, default: '' },
+  productName: { type: String, default: '' },
+  code:     { type: String, default: '' },
+  qty:      { type: Number },
   userId:   { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   actorName: { type: String, default: '' },
   legacyActorName: { type: String, default: '' },
   createdAt: { type: Date, default: Date.now }
 });
 logSchema.index({ tenantId: 1, userId: 1 });
+// Cosmos DB kräver ett index för varje sortering. Ett fältindex räcker inte
+// när frågan också filtrerar på tenantId, därför finns båda.
+const LOG_SORT_INDEXES = ['createdAt', 'articleNo', 'productName', 'actorName', 'activityType', 'qty'];
+for (const field of LOG_SORT_INDEXES) {
+  logSchema.index({ [field]: 1 });
+  logSchema.index({ tenantId: 1, [field]: 1 });
+  logSchema.index({ tenantId: 1, [field]: -1 });
+}
 
 // ── Inventeringsrapport ──
 const inventoryReportSchema = new mongoose.Schema({

@@ -9,6 +9,7 @@ require('dotenv').config();
 const mongoose = require('mongoose');
 const { User, Log, Vehicle, InventoryReport, Order, Product, PrintJob } = require('../models');
 const userLink = require('../public/js/user-link');
+const logQuery = require('../public/js/log-query');
 
 const APPLY = process.argv.includes('--apply');
 
@@ -167,7 +168,7 @@ async function main() {
   const add = addBucket;
 
   const users = await User.find().select('name tenantId').lean();
-  const logs = await Log.find().select('tenantId msg actorName userId legacyActorName').lean();
+  const logs = await Log.find().select('tenantId msg actorName userId legacyActorName activityType productName qty').lean();
   const vehicles = await Vehicle.find().select('tenantId history').lean();
   const inventoryReports = await InventoryReport.find().select('tenantId actorName userId legacyActorName').lean();
   const [orders, products, printJobs] = await Promise.all([
@@ -201,7 +202,7 @@ async function main() {
   }
   totals.orders.documents = orders;
 
-  console.log(APPLY ? 'Läge: apply (skriver userId)' : 'Läge: torrkörning (skriver inget)');
+  console.log(APPLY ? 'Läge: apply (skriver userId och tolkade loggfält)' : 'Läge: torrkörning (skriver inget)');
   printBucket('Händelselogg', totals.logs);
   printBucket('Fordon, uttag i historiken', totals.vehicles);
   printBucket('Inventeringsrapporter', totals.inventoryReports);
@@ -211,6 +212,13 @@ async function main() {
   console.log('  Order.name är produktnamn. Ordrar har ingen användarreferens och lämnas orörda.');
   console.log('\nÖvrigt utan användarreferens');
   console.log(`  produkter: ${products}, utskriftsjobb: ${printJobs} — orörda`);
+
+  const structure = logQuery.planLogStructure(logs);
+  console.log('\nStrukturerade loggfält (från äldre text, utan att röra msg)');
+  console.log(`  granskade: ${structure.examined}`);
+  console.log(`  kan tolkas: ${structure.parsed}`);
+  console.log(`  lämnas: ${structure.skipped}`);
+  console.log(`  skrivningar: ${structure.updates.length}`);
 
   if (!APPLY) {
     console.log('\nInget skrevs. Kör med --apply när torrkörningen ser rätt ut.');
@@ -226,8 +234,22 @@ async function main() {
     written.inventoryReports += part.inventoryReports;
     written.skippedUnsafe += part.skippedUnsafe;
   }
+  let structured = 0;
+  for (const update of structure.updates) {
+    const set = {};
+    if (update.set.activityType) set.activityType = update.set.activityType;
+    if (update.set.productName) set.productName = update.set.productName;
+    if (update.set.qty != null) set.qty = update.set.qty;
+    const result = await Log.updateOne({
+      _id: update.id,
+      tenantId: update.tenantId,
+      $or: [{ activityType: { $exists: false } }, { activityType: null }, { activityType: '' }]
+    }, { $set: set });
+    if (result.modifiedCount) structured += 1;
+  }
   console.log('\nKlart.');
   console.log(`  loggar uppdaterade: ${written.logs}`);
+  console.log(`  loggar med nya fält: ${structured}`);
   console.log(`  fordon uppdaterade: ${written.vehicles}`);
   console.log(`  inventeringar uppdaterade: ${written.inventoryReports}`);
   console.log(`  överhoppade osäkra: ${written.skippedUnsafe}`);
