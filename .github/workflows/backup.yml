@@ -33,7 +33,9 @@ jobs:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
         run: |
           set -euo pipefail
-          DATE=$(date +%Y-%m-%d)
+          # Klockslag i namnet så att en manuell körning inte krockar med den schemalagda.
+          DATE=$(date -u +%Y-%m-%d-%H%M)
+          echo "BACKUP_STAMP=$DATE" >> "$GITHUB_ENV"
           # Box-runnerns DNS svarar inte på SRV: lös upp via DoH-fallback till mongodb://-URI.
           urifile=$(mktemp); chmod 600 "$urifile"
           node scripts/resolve-srv-uri.js "$urifile"
@@ -59,7 +61,7 @@ jobs:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
           set -euo pipefail
-          DATE=$(date +%Y-%m-%d)
+          DATE="$BACKUP_STAMP"
           az storage blob upload \
             --container-name backups \
             --name "backup-$DATE.gz" \
