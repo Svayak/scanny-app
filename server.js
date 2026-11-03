@@ -9,6 +9,8 @@ const cors       = require('cors');
 const { assetVersion, injectAssetVersion } = require('./app-version');
 const { textField, mongoProductFilter } = require('./public/js/product-search');
 const userLink = require('./public/js/user-link');
+const { persistActor, withdrawalEntry } = require('./user-id-store');
+const logQuery = require('./public/js/log-query');
 const APP_VERSION = assetVersion(__dirname);
 
 const helmet = require('helmet');
@@ -182,15 +184,13 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost/scanny')
 // ── Hjälpfunktioner ──
 function addLog(tenantId, msg, type = 'normal', actor = null, fields = null) {
   const now = new Date();
-  const actorBits = userLink.actorFields(actor);
-  if (!actorBits.actorName && actor && actor.name) actorBits.actorName = String(actor.name);
   return Log.create({
     tenantId,
     time: now.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }),
     date: now.toLocaleDateString('sv-SE'),
     msg, type,
-    ...(fields || {}),
-    ...actorBits
+    ...persistActor(actor),
+    ...logQuery.logFields(fields)
   }).catch(() => {});
 }
 
@@ -321,9 +321,9 @@ async function getActor(req) {
 // Läser användaren från databasen vid varje anrop, så en ändrad behörighet gäller direkt.
 const requirePermission = userLink.createPermissionGate(getActor);
 
-async function writeLog(req, msg, type = 'normal') {
+async function writeLog(req, msg, type = 'normal', fields = null) {
   const actor = req.actor || await getActor(req);
-  return addLog(req.tenantId, msg, type, actor);
+  return addLog(req.tenantId, msg, type, actor, fields);
 }
 
 async function userIndex(tenantId) {
@@ -374,7 +374,7 @@ app.post('/api/products', authMiddleware, async (req, res) => {
     if (await Product.findOne(productTrash.activeFilter(req.tenantId, { code }))) return res.status(409).json({ error: 'Streckkod finns redan' });
     const cleanPrice = Math.max(0, parseFloat(price) || 0);
     const product = await Product.create({ tenantId: req.tenantId, name, code, qty: qty||0, min: min||5, critical: critical||2, orderQty: orderQty||10, articleNo: textField(articleNo), supplier: textField(supplier), price: cleanPrice });
-    await writeLog(req, `Ny produkt tillagd: ${name}`);
+    await writeLog(req, `Ny produkt tillagd: ${name}`, 'normal', logQuery.fromProduct(product, 'admin'));
     res.json(product);
   } catch (err) {
     if (productTrash.duplicateKey(err)) return res.status(409).json({ error: 'Streckkod finns redan' });
@@ -453,7 +453,7 @@ app.post('/api/products/:id/print-label', authMiddleware, async (req, res) => {
     if (!product) return res.status(404).json({ error: 'Produkt hittades inte' });
     const tenant = await Tenant.findById(req.tenantId);
     await printLabel(product, tenant?.settings || {});
-    await writeLog(req, `Etikett utskriven: ${product.name}`);
+    await writeLog(req, `Etikett utskriven: ${product.name}`, 'normal', logQuery.fromProduct(product, 'admin'));
     res.json({ ok: true });
   } catch (err) { res.status(400).json({ error: mail.safeErrorMessage(err, [process.env.SMTP_PASSWORD]) || 'Utskrift misslyckades' }); }
 });
@@ -467,7 +467,7 @@ app.post('/api/scan', authMiddleware, checkTenantActive, requirePermission('scan
     const { code } = req.body;
     const trimmed = code?.trim();
     const existing = await Product.findOne(productTrash.activeFilter(req.tenantId, { code: trimmed }));
-    if (!existing) { await writeLog(req, `Okänd streckkod: ${code}`, 'warn'); return res.status(404).json({ error: `Okänd streckkod: ${code}` }); }
+    if (!existing) { await writeLog(req, `Okänd streckkod: ${code}`, 'warn', { activityType: 'ovrigt', code: trimmed }); return res.status(404).json({ error: `Okänd streckkod: ${code}` }); }
     // Atomisk minskning — förhindrar race condition och negativt lager
     const p = await Product.findOneAndUpdate(
       productTrash.activeFilter(req.tenantId, { code: trimmed, qty: { $gt: 0 } }),
@@ -475,13 +475,13 @@ app.post('/api/scan', authMiddleware, checkTenantActive, requirePermission('scan
       { new: true }
     );
     if (!p) return res.status(400).json({ error: `${existing.name} är slut på lager` });
-    await writeLog(req, `Uttag: ${p.name} (kvar: ${p.qty})${req.actor ? ` — ${req.actor.name}` : ''}`);
+    await writeLog(req, `Uttag: ${p.name} (kvar: ${p.qty})${req.actor ? ` — ${req.actor.name}` : ''}`, 'normal', logQuery.fromProduct(p, 'uttag', 1));
     let orderCreated = false;
     if (p.qty <= p.min) {
       const exists = await Order.findOne(productTrash.visibleOrderFilter(req.tenantId, { productId: p._id, sent: false }));
       if (!exists) {
         await Order.create({ tenantId: req.tenantId, productId: p._id, name: p.name, code: p.code, orderQty: p.orderQty, supplier: p.supplier, articleNo: p.articleNo });
-        await writeLog(req, `BESTÄLLNING skapad: ${p.name}`, 'order');
+        await writeLog(req, `BESTÄLLNING skapad: ${p.name}`, 'order', logQuery.fromProduct(p, 'ovrigt', p.orderQty));
         orderCreated = true;
       }
     }
@@ -499,8 +499,8 @@ app.post('/api/scan', authMiddleware, checkTenantActive, requirePermission('scan
         const now = new Date().toLocaleString('sv-SE');
         const text = `KRITISK LAGERVARNING — ${s.workshop}\n${now}\n\nProdukten "${p.name}" har nått kritisk lagernivå!\n\n  Aktuellt antal:    ${p.qty} st\n  Kritisk nivå:      ${p.critical} st\n  Artikelnummer:  ${p.articleNo||'—'}\n  Leverantör:       ${p.supplier||'—'}\n  Streckkod:        ${p.code}\n\nÅtgärd krävs omgående!\n\nVänliga hälsningar,\nScanny — ${s.workshop}`;
         mail.sendTenantMail(s, { to: recipients.join(', '), subject: `⚠️ KRITISKT: ${p.name} — ${s.workshop}`, text })
-          .then(() => writeLog(req, `KRITISK — e-post skickad: ${p.name}`, 'order'))
-          .catch(err => writeLog(req, `E-post misslyckades: ${mail.safeErrorMessage(err, [s.smtpPass, process.env.SMTP_PASSWORD, process.env.ACS_EMAIL_CONNECTION_STRING, process.env.MONGODB_URI])}`, 'warn'));
+          .then(() => writeLog(req, `KRITISK — e-post skickad: ${p.name}`, 'order', logQuery.fromProduct(p, 'ovrigt')))
+          .catch(err => writeLog(req, `E-post misslyckades: ${mail.safeErrorMessage(err, [s.smtpPass, process.env.SMTP_PASSWORD, process.env.ACS_EMAIL_CONNECTION_STRING, process.env.MONGODB_URI])}`, 'warn', logQuery.fromProduct(p, 'ovrigt')));
       }
     }
     res.json({ product: p, orderCreated, criticalAlert });
@@ -516,8 +516,8 @@ app.post('/api/add', authMiddleware, checkTenantActive, requirePermission('add',
       { $inc: { qty: 1 } },
       { new: true }
     );
-    if (!p) { await writeLog(req, `Okänd streckkod: ${code}`, 'warn'); return res.status(404).json({ error: `Okänd streckkod: ${code}` }); }
-    await writeLog(req, `Påfyllning: ${p.name} (nu ${p.qty})${req.actor ? ` — ${req.actor.name}` : ''}`);
+    if (!p) { await writeLog(req, `Okänd streckkod: ${code}`, 'warn', { activityType: 'ovrigt', code: code?.trim() }); return res.status(404).json({ error: `Okänd streckkod: ${code}` }); }
+    await writeLog(req, `Påfyllning: ${p.name} (nu ${p.qty})${req.actor ? ` — ${req.actor.name}` : ''}`, 'normal', logQuery.fromProduct(p, 'addera', 1));
     // Automatisk etikett är ett tillägg. Svaret skickas som tidigare, utan att vänta på kön.
     // Ett fel i kön får inte ändra inleveransen.
     try {
@@ -548,7 +548,7 @@ app.post('/api/orders/send', authMiddleware, async (req, res) => {
     if (!pending.length) return res.status(400).json({ error: 'Inga aktiva beställningar' });
     await sendOrderEmail(tenant.settings, pending);
     await Order.updateMany({ _id: { $in: pending.map(order => order._id) } }, { sent: true });
-    await writeLog(req, `Beställning skickad (${pending.length} artiklar)`, 'order');
+    await writeLog(req, `Beställning skickad (${pending.length} artiklar)`, 'order', { activityType: 'admin', qty: pending.length });
     res.json({ ok: true, sent: pending.length });
   } catch (err) { serverError(res, err); }
 });
@@ -557,7 +557,7 @@ app.post('/api/orders/mark-sent', authMiddleware, async (req, res) => {
   try {
     const pending = await Order.find(productTrash.visibleOrderFilter(req.tenantId, { sent: false })).select('_id');
     const result = await Order.updateMany({ _id: { $in: pending.map(order => order._id) } }, { sent: true });
-    await writeLog(req, `${result.modifiedCount} beställningar markerade som skickade`, 'order');
+    await writeLog(req, `${result.modifiedCount} beställningar markerade som skickade`, 'order', { activityType: 'admin', qty: result.modifiedCount });
     res.json({ ok: true });
   } catch (err) { serverError(res, err); }
 });
@@ -566,7 +566,7 @@ app.patch('/api/orders/:id/sent', authMiddleware, async (req, res) => {
   try {
     const order = await Order.findOneAndUpdate(productTrash.visibleOrderFilter(req.tenantId, { _id: req.params.id }), { sent: true }, { new: true });
     if (!order) return res.status(404).json({ error: 'Order hittades inte' });
-    await writeLog(req, `Order markerad som skickad: ${order.name}`, 'order');
+    await writeLog(req, `Order markerad som skickad: ${order.name}`, 'order', logQuery.fromProduct(order, 'admin'));
     res.json({ ok: true });
   } catch (err) { serverError(res, err); }
 });
@@ -582,7 +582,7 @@ app.post('/api/inventory-report', authMiddleware, checkTenantActive, requirePerm
     const planTenant = await Tenant.findById(req.tenantId);
     if (!planOf(planTenant).inventoryReports) return res.json({ ok: true, sent: false, note: 'Inventeringsrapport ingår inte i din plan' });
     const diffs = entries.filter(e => e.scanned !== e.previous);
-    await writeLog(req, `Inventering: ${entries.length} artiklar, ${diffs.length} differenser${req.actor ? ` — ${req.actor.name}` : ''}`, 'order');
+    await writeLog(req, `Inventering: ${entries.length} artiklar, ${diffs.length} differenser${req.actor ? ` — ${req.actor.name}` : ''}`, 'order', { activityType: 'inventering', qty: entries.length });
     // Spara rapport i historiken
     const rNow = new Date();
     await InventoryReport.create({
@@ -592,7 +592,7 @@ app.post('/api/inventory-report', authMiddleware, checkTenantActive, requirePerm
       total:     entries.length,
       diffCount: diffs.length,
       actorName: req.actor?.name || '',
-      ...userLink.actorFields(req.actor),
+      ...persistActor(req.actor),
       entries
     }).catch(() => {});
     const tenant = await Tenant.findById(req.tenantId);
@@ -641,7 +641,7 @@ app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
       role: 'staff', color: color || randomColor(), initials: userLink.initialsOf(name),
       permissions: permissions ? userLink.normalizePermissions(permissions) : { canScan: true, canAdd: false, canInventory: false }
     });
-    await writeLog(req, `Ny användare: ${name}`);
+    await writeLog(req, `Ny användare: ${name}`, 'normal', { activityType: 'admin' });
     res.json({ id: user._id, name: user.name, color: user.color, permissions: user.permissions, hasPin: !!user.pin });
   } catch (err) { serverError(res, err); }
 });
@@ -685,7 +685,7 @@ app.patch('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
     user.markModified('permissions');
     await user.save();
     const actor = await getActor(req);
-    await addLog(req.tenantId, userLink.changeMessage(oldName, user.name, user.permissions, actor), 'normal', actor);
+    await addLog(req.tenantId, userLink.changeMessage(oldName, user.name, user.permissions, actor), 'normal', actor, { activityType: 'admin' });
     res.json(redact.sanitizeUser(user));
   } catch (err) { serverError(res, err); }
 });
@@ -694,7 +694,7 @@ app.delete('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
   try {
     const user = await User.findOneAndDelete({ _id: req.params.id, tenantId: req.tenantId });
     if (!user) return res.status(404).json({ error: 'Användare hittades inte' });
-    await writeLog(req, `Användare borttagen: ${user.name}`);
+    await writeLog(req, `Användare borttagen: ${user.name}`, 'normal', { activityType: 'admin' });
     res.json({ ok: true });
   } catch (err) { serverError(res, err); }
 });
@@ -718,7 +718,7 @@ app.post('/api/vehicles', authMiddleware, async (req, res) => {
     const { regNr, make, model, color, customerName, customerContact } = req.body;
     if (!regNr) return res.status(400).json({ error: 'Reg-nr krävs' });
     const vehicle = await Vehicle.create({ tenantId: req.tenantId, regNr: regNr.toUpperCase(), make, model, color, customerName, customerContact });
-    await writeLog(req, `Fordon tillagt: ${regNr}`);
+    await writeLog(req, `Fordon tillagt: ${regNr}`, 'normal', { activityType: 'admin' });
     res.json(vehicle);
   } catch (err) { serverError(res, err); }
 });
@@ -727,7 +727,7 @@ app.delete('/api/vehicles/:id', authMiddleware, async (req, res) => {
   try {
     const v = await Vehicle.findOneAndDelete({ _id: req.params.id, tenantId: req.tenantId });
     if (!v) return res.status(404).json({ error: 'Fordon hittades inte' });
-    await writeLog(req, `Fordon borttaget: ${v.regNr}`);
+    await writeLog(req, `Fordon borttaget: ${v.regNr}`, 'normal', { activityType: 'admin' });
     res.json({ ok: true });
   } catch (err) { serverError(res, err); }
 });
@@ -747,15 +747,14 @@ app.post('/api/vehicles/:id/log', authMiddleware, async (req, res) => {
     if (!v) return res.status(404).json({ error: 'Fordon hittades inte' });
     if (v.archived) return res.status(400).json({ error: 'Fordonet är arkiverat' });
     const actor = req.actor || await getActor(req);
-    v.history.unshift({
+    v.history.unshift(withdrawalEntry(actor, {
       time: new Date().toLocaleString('sv-SE'),
       productName,
       qty: qty || 1,
-      userName: actor?.name || userName || '—',
-      articleNo: articleNo || '—',
-      supplier: supplier || '—',
-      ...userLink.actorFields(actor)
-    });
+      userName,
+      articleNo,
+      supplier
+    }));
     if (v.history.length > 500) v.history = v.history.slice(0, 500);
     await v.save();
     res.json({ ok: true });
@@ -766,7 +765,7 @@ app.patch('/api/vehicles/:id/archive', authMiddleware, async (req, res) => {
   try {
     const v = await Vehicle.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, { archived: true, archivedAt: new Date().toLocaleString('sv-SE') }, { new: true });
     if (!v) return res.status(404).json({ error: 'Fordon hittades inte' });
-    await writeLog(req, `Fordon arkiverat: ${v.regNr}`, 'order');
+    await writeLog(req, `Fordon arkiverat: ${v.regNr}`, 'order', { activityType: 'admin' });
     res.json({ ok: true });
   } catch (err) { serverError(res, err); }
 });
@@ -775,7 +774,7 @@ app.patch('/api/vehicles/:id/unarchive', authMiddleware, async (req, res) => {
   try {
     const v = await Vehicle.findOneAndUpdate({ _id: req.params.id, tenantId: req.tenantId }, { archived: false, $unset: { archivedAt: '' } }, { new: true });
     if (!v) return res.status(404).json({ error: 'Fordon hittades inte' });
-    await writeLog(req, `Fordon återöppnat: ${v.regNr}`);
+    await writeLog(req, `Fordon återöppnat: ${v.regNr}`, 'normal', { activityType: 'admin' });
     res.json({ ok: true });
   } catch (err) { serverError(res, err); }
 });
@@ -835,7 +834,7 @@ app.post('/api/settings/test-alert', authMiddleware, adminOnly, async (req, res)
       subject: 'Testmejl från Scanny — lagerlarm',
       text: `Det här är ett test av lagerlarm från Scanny${workshop ? ` (${workshop})` : ''}.\n\nOm du läser det här når kritiska lagervarningar den här adressen.\n\nVänliga hälsningar,\nScanny`
     });
-    await writeLog(req, `Testmejl för lagerlarm skickat (${channel})`, 'order');
+    await writeLog(req, `Testmejl för lagerlarm skickat (${channel})`, 'order', { activityType: 'admin' });
     res.json({ ok: true, sent: decision.recipients.length, channel });
   } catch (err) {
     console.error('[FEL] testmejl:', mail.safeErrorMessage(err, [smtpPass, process.env.SMTP_PASSWORD, process.env.ACS_EMAIL_CONNECTION_STRING]));
@@ -846,6 +845,68 @@ app.post('/api/settings/test-alert', authMiddleware, adminOnly, async (req, res)
 // ══════════════════════════════════════════
 //  LOGG & CSV
 // ══════════════════════════════════════════
+
+function logListQuery(req, knownUsers) {
+  return logQuery.buildLogQuery({
+    tenantId: req.tenantId,
+    from: req.query.from,
+    to: req.query.to,
+    userId: req.query.userId,
+    knownUserIds: knownUsers.map(user => user._id),
+    type: req.query.type,
+    q: req.query.q,
+    sort: req.query.sort,
+    dir: req.query.dir,
+    page: req.query.page,
+    pageSize: req.query.pageSize
+  });
+}
+
+app.get('/api/log.csv', authMiddleware, async (req, res) => {
+  try {
+    const known = await User.find({ tenantId: req.tenantId }).select('name');
+    const built = logListQuery(req, known);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="handelser.csv"');
+    res.write('\uFEFF' + logQuery.CSV_HEADERS.join(',') + '\n');
+    const cursor = Log.find(built.filter).sort(built.sort).cursor({ batchSize: 200 });
+    for await (const doc of cursor) {
+      const item = logQuery.presentLogItem(doc, known);
+      res.write([
+        item.date,
+        item.time,
+        item.articleNo,
+        item.productName,
+        item.code,
+        item.person,
+        item.activityLabel,
+        item.qty == null ? '' : item.qty,
+        item.msg
+      ].map(logQuery.csvSafe).join(',') + '\n');
+    }
+    res.end();
+  } catch (err) {
+    if (!res.headersSent) serverError(res, err);
+    else res.end();
+  }
+});
+
+app.get('/api/log', authMiddleware, async (req, res) => {
+  try {
+    const known = await User.find({ tenantId: req.tenantId }).select('name');
+    const built = logListQuery(req, known);
+    const [total, rows] = await Promise.all([
+      Log.countDocuments(built.filter),
+      Log.find(built.filter).sort(built.sort).skip(built.skip).limit(built.pageSize)
+    ]);
+    res.json({
+      items: rows.map(row => logQuery.presentLogItem(row, known)),
+      total,
+      page: built.page,
+      pageSize: built.pageSize
+    });
+  } catch (err) { serverError(res, err); }
+});
 
 app.get('/api/logs', authMiddleware, async (req, res) => {
   try {
@@ -980,7 +1041,7 @@ app.post('/api/products/import', authMiddleware, adminOnly, importLimiter, expre
         else { await Product.create({ tenantId: req.tenantId, code, ...fields }); created++; }
       } catch (e) { skipped++; errors.push(`Rad ${i + 1} (${code}): ${mail.safeErrorMessage(e, [process.env.MONGODB_URI, process.env.SMTP_PASSWORD])}`); }
     }
-    await writeLog(req, `CSV-import: ${created} nya, ${updated} uppdaterade, ${skipped} \u00F6verhoppade`);
+    await writeLog(req, `CSV-import: ${created} nya, ${updated} uppdaterade, ${skipped} \u00F6verhoppade`, 'normal', { activityType: 'admin', qty: created + updated });
     res.json({ ok: true, created, updated, skipped, errors: errors.slice(0, 20) });
   } catch (err) { serverError(res, err); }
 });
@@ -1214,14 +1275,14 @@ async function runScheduledOrders() {
       if (!mail.shouldSendScheduled(s, planOf(t).scheduledOrders, nowDay, nowTime)) continue;
 
       const pending = await Order.find(productTrash.visibleOrderFilter(t._id, { sent: false }));
-      if (!pending.length) { await addLog(t._id, 'Schemalagd beställning: inga aktiva beställningar att skicka'); continue; }
+      if (!pending.length) { await addLog(t._id, 'Schemalagd beställning: inga aktiva beställningar att skicka', 'normal', null, { activityType: 'ovrigt' }); continue; }
       try {
         await sendOrderEmail(s, pending);
         await Order.updateMany({ _id: { $in: pending.map(order => order._id) } }, { sent: true });
-        await addLog(t._id, `Schemalagd beställning skickad (${pending.length} artiklar)`, 'order');
+        await addLog(t._id, `Schemalagd beställning skickad (${pending.length} artiklar)`, 'order', null, { activityType: 'ovrigt', qty: pending.length });
       } catch (err) {
         const detail = mail.safeErrorMessage(err, [s.smtpPass, process.env.SMTP_PASSWORD, process.env.ACS_EMAIL_CONNECTION_STRING, process.env.MONGODB_URI]);
-        await addLog(t._id, `Schemalagd beställning misslyckades: ${detail}`, 'warn');
+        await addLog(t._id, `Schemalagd beställning misslyckades: ${detail}`, 'warn', null, { activityType: 'ovrigt' });
       }
     }
   } catch (err) {

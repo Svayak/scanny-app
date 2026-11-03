@@ -9,26 +9,29 @@
     "test:bridge": "python3 -m unittest discover -s print_bridge/tests -v"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.9.0"
   },
   "dependencies": {
     "@azure/communication-email": "^1.1.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
-    "express": "^4.18.2",
+    "express": "^4.22.3",
     "express-mongo-sanitize": "^2.2.0",
     "express-rate-limit": "^8.5.1",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.0.0",
-    "nodemailer": "^9.0.1"
+    "nodemailer": "^10.3.1"
   },
   "optionalDependencies": {
     "bwip-js": "^4.5.1",
-    "sharp": "^0.33.5"
+    "sharp": "^0.35.5"
   },
   "overrides": {
-    "qs": "^6.15.2"
+    "qs": "6.16.1",
+    "body-parser": "1.20.9",
+    "proxy-addr": "2.0.8",
+    "ip-address": "10.7.5"
   }
 }
