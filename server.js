@@ -33,7 +33,7 @@ try { ({ generateLabelPng, printLabel } = require('./label')); }
 catch (err) { console.warn('Etikettmodul ej tillgänglig (bwip-js/sharp saknas?):', mail.safeErrorMessage(err, [process.env.SMTP_PASSWORD])); }
 const { createPrintFeature, respondPrintError } = require('./print-api');
 
-// ── Paketnivåer (matchar priserna på landningssidan) ──
+// ── Paketnivåer. Gränserna beskrivs på landningssidan, utan priser. ──
 const PLAN_LIMITS = {
   bas:      { maxUsers: 10,       scheduledOrders: false, inventoryReports: false, pdfExport: false, api: false },
   standard: { maxUsers: 25,       scheduledOrders: true,  inventoryReports: true,  pdfExport: true,  api: false },
@@ -82,8 +82,8 @@ app.use(helmet({
       fontSrc: ["'self'", 'https://fonts.gstatic.com'],
       imgSrc: ["'self'", 'data:', 'blob:'],
       mediaSrc: ["'self'", 'blob:'],
-      connectSrc: ["'self'", 'https://formspree.io'],
-      formAction: ["'self'", 'https://formspree.io'],
+      connectSrc: ["'self'"],
+      formAction: ["'self'"],
       objectSrc: ["'none'"],
       baseUri: ["'self'"],
       frameAncestors: ["'self'"],
