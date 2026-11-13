@@ -71,8 +71,11 @@ h1.hero-title{font-size:clamp(42px,7vw,84px);font-weight:700;line-height:1.05;le
 .mock-metric{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
 .mock-metric-label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
 .mock-metric-value{font-size:22px;font-weight:700;color:var(--text3)}
+.mock-metric-value.green{color:var(--accent)}.mock-metric-value.yellow{color:var(--warn)}.mock-metric-value.red{color:var(--danger)}
 .mock-table{background:var(--surface2);border:1px solid var(--border);border-radius:8px;overflow:hidden}
-.mock-row{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;padding:8px 12px;border-bottom:1px solid var(--border);font-size:11px;align-items:center}
+.mock-row{display:grid;grid-template-columns:minmax(0,2.1fr) minmax(0,1.1fr) minmax(0,1.4fr) auto;gap:6px 8px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:11px;align-items:center}
+.mock-row > span{min-width:0;overflow-wrap:break-word}
+.mock-row > span:nth-child(2),.mock-row > span:last-child{white-space:nowrap}
 .mock-row:last-child{border-bottom:none}
 .mock-row.header{color:var(--text3);font-size:10px;text-transform:uppercase;letter-spacing:.04em;background:rgba(255,255,255,.02)}
 .mock-badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:600}
@@ -102,7 +105,7 @@ section{padding:100px 24px;max-width:1100px;margin:0 auto}
 .kiosk-users{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
 .kiosk-user{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;display:flex;align-items:center;gap:10px}
 .kiosk-avatar{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0}
-.kiosk-user-name{font-size:13px;font-weight:600}
+.kiosk-user-name{font-size:13px;font-weight:600;min-width:0}
 .kiosk-modes{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px}
 .kiosk-mode{background:var(--surface2);border:2px solid var(--border);border-radius:var(--radius);padding:12px 8px;text-align:center;font-size:12px;font-weight:600;color:var(--text2)}
 .kiosk-mode.active{border-color:#ef4444;background:rgba(239,68,68,.1);color:#fca5a5}
@@ -159,7 +162,20 @@ footer{border-top:1px solid var(--border);padding:36px 40px;display:flex;align-i
   .mockup-body{grid-template-columns:1fr}
   .mock-sidebar{display:none}
   .mock-metrics{grid-template-columns:repeat(2,1fr)}
+  .mockup-body{padding:16px}
+  .mock-content{padding:10px 4px 4px;gap:12px}
+  .mock-table{text-align:left}
+  .mock-row{grid-template-columns:minmax(0,1fr) auto;font-size:11px;padding:8px 10px;gap:2px 10px}
+  .mock-row > span:nth-child(1){grid-column:1;grid-row:1}
+  .mock-row > span:nth-child(2){grid-column:1;grid-row:2;white-space:nowrap;color:var(--text3);font-size:10px}
+  .mock-row > span:nth-child(3){grid-column:2;grid-row:2;white-space:nowrap;color:var(--text3);font-size:10px;text-align:right;justify-self:end}
+  .mock-row > span:last-child{grid-column:2;grid-row:1;white-space:nowrap;justify-self:end}
+  .mock-row.header > span:nth-child(2),.mock-row.header > span:nth-child(3){display:none}
+  .mock-row.header{letter-spacing:.03em}
   .kiosk-wrap{grid-template-columns:1fr;gap:40px}
+  .kiosk-mockup{padding:16px}
+  .kiosk-user{padding:10px}
+  .kiosk-user-name{font-size:12px;white-space:nowrap}
   .cta-box{padding:40px 22px}
   footer{flex-direction:column;text-align:center}
 }
@@ -228,16 +244,21 @@ footer{border-top:1px solid var(--border);padding:36px 40px;display:flex;align-i
       <div class="mock-content">
         <div class="mock-header">Lagerstatus</div>
         <div class="mock-metrics">
-          <div class="mock-metric"><div class="mock-metric-label">Produkter</div><div class="mock-metric-value">–</div></div>
-          <div class="mock-metric"><div class="mock-metric-label">Kritiska</div><div class="mock-metric-value">–</div></div>
-          <div class="mock-metric"><div class="mock-metric-label">Beställ</div><div class="mock-metric-value">–</div></div>
-          <div class="mock-metric"><div class="mock-metric-label">Ordrar</div><div class="mock-metric-value">–</div></div>
+          <div class="mock-metric"><div class="mock-metric-label">Produkter</div><div class="mock-metric-value green">48</div></div>
+          <div class="mock-metric"><div class="mock-metric-label">Kritiska</div><div class="mock-metric-value red">2</div></div>
+          <div class="mock-metric"><div class="mock-metric-label">Beställ</div><div class="mock-metric-value yellow">2</div></div>
+          <div class="mock-metric"><div class="mock-metric-label">Ordrar</div><div class="mock-metric-value yellow">1</div></div>
         </div>
         <div class="mock-table">
           <div class="mock-row header"><span>Produkt</span><span>Antal</span><span>Leverantör</span><span>Status</span></div>
-          <div class="mock-row"><span></span><span>–</span><span>–</span><span class="mock-badge ok">OK</span></div>
-          <div class="mock-row"><span></span><span>–</span><span>–</span><span class="mock-badge warn">Beställ</span></div>
-          <div class="mock-row"><span></span><span>–</span><span>–</span><span class="mock-badge danger">Kritisk</span></div>
+          <div class="mock-row"><span>Universalfett</span><span>18 burkar</span><span>Kemleverantören</span><span class="mock-badge ok">OK</span></div>
+          <div class="mock-row"><span>Kopparpasta</span><span>9 burkar</span><span>Kemleverantören</span><span class="mock-badge ok">OK</span></div>
+          <div class="mock-row"><span>Kontaktspray</span><span>3 burkar</span><span>Verkstadsgrossisten</span><span class="mock-badge warn">Beställ</span></div>
+          <div class="mock-row"><span>Bromsrengöring</span><span>1 burk</span><span>Verkstadsgrossisten</span><span class="mock-badge danger">Kritisk</span></div>
+          <div class="mock-row"><span>Avfettningsmedel</span><span>8 liter</span><span>Kemleverantören</span><span class="mock-badge warn">Beställ</span></div>
+          <div class="mock-row"><span>Spolarvätska</span><span>20 liter</span><span>Grossist Nord</span><span class="mock-badge ok">OK</span></div>
+          <div class="mock-row"><span>Motorolja 5W-30</span><span>2 liter</span><span>Grossist Nord</span><span class="mock-badge danger">Kritisk</span></div>
+          <div class="mock-row"><span>Nitrilhandskar</span><span>24 förp</span><span>Verkstadsgrossisten</span><span class="mock-badge ok">OK</span></div>
         </div>
       </div>
     </div>
@@ -317,10 +338,10 @@ footer{border-top:1px solid var(--border);padding:36px 40px;display:flex;align-i
     </div>
     <div style="font-size:12px;color:var(--text2);margin-bottom:10px">Välj användare</div>
     <div class="kiosk-users">
-      <div class="kiosk-user"><div class="kiosk-avatar" style="background:#0f6e56">A</div><div class="kiosk-user-name"></div></div>
-      <div class="kiosk-user"><div class="kiosk-avatar" style="background:#7c3aed">B</div><div class="kiosk-user-name"></div></div>
-      <div class="kiosk-user"><div class="kiosk-avatar" style="background:#b45309">C</div><div class="kiosk-user-name"></div></div>
-      <div class="kiosk-user"><div class="kiosk-avatar" style="background:#1d4ed8">D</div><div class="kiosk-user-name"></div></div>
+      <div class="kiosk-user"><div class="kiosk-avatar" style="background:#0f6e56">V</div><div class="kiosk-user-name">Verkstad</div></div>
+      <div class="kiosk-user"><div class="kiosk-avatar" style="background:#7c3aed">L</div><div class="kiosk-user-name">Lager</div></div>
+      <div class="kiosk-user"><div class="kiosk-avatar" style="background:#b45309">1</div><div class="kiosk-user-name">Mekaniker 1</div></div>
+      <div class="kiosk-user"><div class="kiosk-avatar" style="background:#1d4ed8">2</div><div class="kiosk-user-name">Mekaniker 2</div></div>
     </div>
     <div style="height:1px;background:var(--border);margin:14px 0"></div>
     <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Välj läge</div>
